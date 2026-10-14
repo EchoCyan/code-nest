@@ -87,7 +87,7 @@ public final class EventQueues {
                 .filter(method -> classListener != null
                         ? method.isAnnotationPresent(RabbitHandler.class)
                         : listensTo(method, queue))
-                .map(EventQueues::eventTypeOf)
+                .<Class<?>>map(EventQueues::eventTypeOf)
                 .distinct()
                 .toList();
         if (eventTypes.isEmpty()) {
