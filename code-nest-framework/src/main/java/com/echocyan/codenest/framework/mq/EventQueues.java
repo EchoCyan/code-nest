@@ -25,8 +25,14 @@ import java.util.stream.Stream;
  */
 public final class EventQueues {
 
+    /**
+     * 全局领域事件发布所使用的唯一统一 Topic 交换机名称。
+     */
     public static final String EXCHANGE = "codenest.events";
 
+    /**
+     * 全局死信消息隔离所使用的 Direct 交换机名称（Dead Letter Exchange）。
+     */
     public static final String DEAD_LETTER_EXCHANGE = "codenest.dlx";
 
     private EventQueues() {
@@ -131,10 +137,20 @@ public final class EventQueues {
                         method.toGenericString() + " has no parameter annotated with @DomainEvent"));
     }
 
+    /**
+     * 构建全局持久化 Topic 领域事件交换机对象。
+     *
+     * @return 持久化、非自动删除的主事件交换机 {@link TopicExchange}
+     */
     static TopicExchange exchange() {
         return new TopicExchange(EXCHANGE, true, false);
     }
 
+    /**
+     * 构建全局持久化 Direct 死信交换机对象。
+     *
+     * @return 持久化、非自动删除的死信交换机 {@link DirectExchange}
+     */
     static DirectExchange deadLetterExchange() {
         return new DirectExchange(DEAD_LETTER_EXCHANGE, true, false);
     }

@@ -20,6 +20,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 用户关注关系控制器。
+ * <p>
+ * 提供关注/取关作者、粉丝与关注列表游标查询以及批量关注状态检查等 REST 接口。
+ */
 @Tag(name = "关注")
 @RestController
 @RequestMapping("/users")
@@ -27,12 +32,18 @@ import java.util.Set;
 public class FollowController {
 
     /**
-     * 一次最多查询的用户数，与列表页的最大 size 一致。
+     * 单次批量查询关注状态的最大用户数量上限（与通用分页单页最大 size 保持一致）。
      */
     private static final int MAX_IDS = 50;
 
     private final FollowService followService;
 
+    /**
+     * 关注指定作者。
+     *
+     * @param id 目标作者用户 ID
+     * @return 成功响应体
+     */
     @Operation(summary = "关注", description = "已关注时不产生变化")
     @RateLimit("follow-per-minute")
     @PutMapping("/{id}/follow")
@@ -41,6 +52,12 @@ public class FollowController {
         return Result.ok();
     }
 
+    /**
+     * 取消关注指定作者。
+     *
+     * @param id 目标作者用户 ID
+     * @return 成功响应体
+     */
     @Operation(summary = "取关", description = "没关注过时不产生变化")
     @RateLimit("follow-per-minute")
     @DeleteMapping("/{id}/follow")
@@ -49,6 +66,14 @@ public class FollowController {
         return Result.ok();
     }
 
+    /**
+     * 游标分页查询指定用户的粉丝列表。
+     *
+     * @param id     目标用户 ID
+     * @param cursor 上一页返回的下一页游标（首次查询为 {@code null}）
+     * @param size   分页大小（默认 20，最小 1，最大 50）
+     * @return 包含粉丝用户列表及下一页游标的统一响应体
+     */
     @SaIgnore
     @Operation(summary = "粉丝列表", description = "按关注时间倒序；cursor 为上一页返回的 nextCursor")
     @GetMapping("/{id}/followers")
@@ -58,6 +83,14 @@ public class FollowController {
         return Result.ok(followService.listFollowers(id, cursor, size));
     }
 
+    /**
+     * 游标分页查询指定用户关注的人列表。
+     *
+     * @param id     目标用户 ID
+     * @param cursor 上一页返回的下一页游标（首次查询为 {@code null}）
+     * @param size   分页大小（默认 20，最小 1，最大 50）
+     * @return 包含关注人列表及下一页游标的统一响应体
+     */
     @SaIgnore
     @Operation(summary = "关注列表", description = "按关注时间倒序；cursor 为上一页返回的 nextCursor")
     @GetMapping("/{id}/followings")
@@ -67,6 +100,12 @@ public class FollowController {
         return Result.ok(followService.listFollowings(id, cursor, size));
     }
 
+    /**
+     * 批量查询当前登录用户对指定用户列表的关注状态。
+     *
+     * @param ids 目标用户 ID 列表（最多 {@value #MAX_IDS} 个）
+     * @return 映射字典统一响应体（用户 ID -> 是否已关注）
+     */
     @Operation(summary = "批量查询关注状态", description = "以用户 ID 为 key，值为是否已关注；ids 最多 " + MAX_IDS
             + " 个")
     @GetMapping("/follow-states")

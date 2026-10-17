@@ -1,17 +1,17 @@
 package com.echocyan.codenest.search.dto;
 
 /**
- * 搜索结果的排序方式。
+ * 文章搜索排序策略。
  */
 public enum SearchSort {
 
     /**
-     * 按相关度，默认。
+     * 按相关度得分降序（默认排序）。
      */
     RELEVANCE,
 
     /**
-     * 按发布时间倒序。
+     * 按文章发布时间降序。
      */
     LATEST
 }

@@ -6,7 +6,10 @@ import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import java.time.LocalDateTime;
 
 /**
- * 我的收藏列表中的一项：文章列表项的全部字段，外加收藏时间。
+ * 用户收藏记录视图对象。
+ *
+ * @param article     文章简要信息（序列化时展平字段）
+ * @param favoritedAt 收藏操作时间
  */
 public record FavoriteVO(@JsonUnwrapped ArticleItem article, LocalDateTime favoritedAt) {
 }

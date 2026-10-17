@@ -8,67 +8,75 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * article 模块对其他模块的门面。已删除的文章、评论视为不存在，
- * {@link #findSnapshot} 与 {@link #listSnapshotsUpdatedSince} 除外。
+ * 文章模块对外暴露的公共门面接口。
  */
 public interface ArticleApi {
 
     /**
-     * 查询已发布文章的作者。直接读数据库、不经缓存，供写操作做前置检查（如只能对已发布文章点赞）。
+     * 查询指定已发布文章的状态与作者信息。
      *
-     * @return 文章不存在、已删除或是草稿时为空
+     * @param articleId 文章 ID
+     * @return 文章状态；若不存在、为草稿或已删除则返回 {@link Optional#empty()}
      */
     Optional<ArticleState> findPublished(long articleId);
 
     /**
-     * 批量查询文章摘要，草稿也会返回，由调用方按状态过滤。经缓存读取，文章编辑、发布、删除后失效。
+     * 批量查询文章摘要。
      *
-     * @return 以文章 ID 为 key；不存在的文章不出现在结果中
+     * @param articleIds 文章 ID 集合
+     * @return 文章 ID 与摘要投影的映射
      */
     Map<Long, ArticleBrief> getBriefs(Collection<Long> articleIds);
 
     /**
-     * 按传入顺序组装已发布文章的列表项，草稿、已删除和不存在的文章被滤掉。摘要与作者经缓存读取，计数每次读取。
+     * 批量组装已发布文章的列表项，保持传入 ID 列表的顺序。
+     *
+     * @param articleIds 文章 ID 列表
+     * @return 已发布文章的列表项列表
      */
     List<ArticleItem> listPublishedItems(List<Long> articleIds);
 
     /**
-     * 查询文章当前的完整内容与版本号，已删除的文章也会返回。
+     * 查询指定文章的完整快照（包含已删除记录）。
      *
-     * @return 文章从未存在时为空
+     * @param articleId 文章 ID
+     * @return 文章快照；若从未创建则返回 {@link Optional#empty()}
      */
     Optional<ArticleSnapshot> findSnapshot(long articleId);
 
     /**
-     * 一批已发布文章的完整内容，按文章 ID 正序，以文章 ID 作游标，用于全量导入搜索索引。
+     * 基于游标批量获取已发布文章的快照，按 ID 升序排列。
      *
-     * @param afterId 只返回 ID 大于它的文章；为 null 时从头开始
-     * @param limit   最多返回的条数
+     * @param afterId 游标偏移量，为 {@code null} 时从头遍历
+     * @param limit   单批最大记录数
+     * @return 已发布文章快照列表
      */
     List<ArticleSnapshot> listPublishedSnapshots(Long afterId, int limit);
 
     /**
-     * 一批已发布文章的状态与作者，按文章 ID 正序，以文章 ID 作游标，用于重建 Feed 发件箱。
+     * 基于游标批量获取已发布文章的状态与作者，按 ID 升序排列。
      *
-     * @param afterId 只返回 ID 大于它的文章；为 null 时从头开始
-     * @param limit   最多返回的条数
+     * @param afterId 游标偏移量，为 {@code null} 时从头遍历
+     * @param limit   单批最大记录数
+     * @return 已发布文章状态列表
      */
     List<ArticleState> listPublishedStates(Long afterId, int limit);
 
     /**
-     * 一批在给定时间及之后更新过的文章的完整内容，草稿和已删除的文章也返回，按文章 ID 正序，以文章 ID 作游标。
-     * 用于重建搜索索引后追补重建期间的变更。
+     * 基于游标批量获取指定时间后发生变更的文章快照（包含草稿与已删除记录），按 ID 升序排列。
      *
-     * @param since   只返回 {@code updated_at} 不早于它的文章
-     * @param afterId 只返回 ID 大于它的文章；为 null 时从头开始
-     * @param limit   最多返回的条数
+     * @param since   更新时间起始下限
+     * @param afterId 游标偏移量，为 {@code null} 时从头遍历
+     * @param limit   单批最大记录数
+     * @return 变更文章快照列表
      */
     List<ArticleSnapshot> listSnapshotsUpdatedSince(LocalDateTime since, Long afterId, int limit);
 
     /**
-     * 批量查询评论或回复的摘要，不检查所属文章的状态。
+     * 批量查询评论或回复的摘要。
      *
-     * @return 以评论 ID 为 key；不存在的评论不出现在结果中
+     * @param commentIds 评论或回复 ID 集合
+     * @return 评论 ID 与摘要的映射
      */
     Map<Long, CommentBrief> getCommentBriefs(Collection<Long> commentIds);
 }

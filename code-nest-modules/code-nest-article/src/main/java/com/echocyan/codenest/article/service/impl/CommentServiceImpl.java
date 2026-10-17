@@ -28,14 +28,15 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
+/**
+ * 评论与楼中楼回复服务实现类。
+ */
 @Service
 @RequiredArgsConstructor
 public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> implements CommentService,
         CounterSource {
 
-    /**
-     * 已删除但仍有回复的评论显示的内容。
-     */
+    /** 已删除评论的占位文案 */
     private static final String DELETED_CONTENT = "该评论已删除";
 
     private final ArticleService articleService;
@@ -158,7 +159,7 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
     }
 
     /**
-     * 用户是否是该评论或其下某条回复的作者。
+     * 校验指定用户是否参与了该根评论下的讨论（为根评论作者或某条历史回复的作者）。
      */
     private boolean inDiscussion(long articleId, long rootId, long userId) {
         return lambdaQuery()
@@ -169,13 +170,18 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
     }
 
     /**
-     * @throws BizException 文章不存在、已删除或是草稿时 {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
+     * 校验文章存在且处于已发布状态。
+     *
+     * @throws BizException 若文章不存在、已删除或是草稿态抛出 {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
      */
     private Article requirePublished(long articleId) {
         return articleService.findPublished(articleId)
                 .orElseThrow(() -> new BizException(ArticleErrorCode.ARTICLE_NOT_FOUND));
     }
 
+    /**
+     * 构建将评论实体批量映射为视图对象 {@link CommentVO} 的转换函数，聚合用户信息与实时回复计数。
+     */
     private Function<Comment, CommentVO> commentVOMapper(List<Comment> comments) {
         List<Long> ids = comments.stream().map(Comment::getId).toList();
         Map<Long, Counts> counts = counterApi.get(CounterTarget.COMMENT, ids);

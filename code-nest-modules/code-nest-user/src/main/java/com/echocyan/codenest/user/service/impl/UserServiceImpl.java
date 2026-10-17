@@ -23,6 +23,11 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+/**
+ * 用户业务服务实现类。
+ * <p>
+ * 处理用户注册、凭证校验、用户资料与多维度计数聚合、资料覆盖更新与缓存失效。
+ */
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
@@ -72,7 +77,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Override
     public void updateProfile(long userId, UpdateProfileRequest request) {
-        // 传入空实体是为了触发 updated_at 的自动填充
+        // 传入空实体以触发 MyBatis-Plus 的 updated_at 自动填充机制
         lambdaUpdate()
                 .set(User::getNickname, request.nickname())
                 .set(User::getAvatarUrl, request.avatarUrl())

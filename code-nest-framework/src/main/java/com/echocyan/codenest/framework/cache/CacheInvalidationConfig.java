@@ -7,12 +7,21 @@ import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 /**
- * 订阅本地缓存的失效广播，交给 {@link TwoLevelCaches} 处理。
- * Pub/Sub 不保证送达，漏收的实例靠本地缓存 60 秒的过期时间兜底。
+ * 本地缓存失效广播监听配置。
+ *
+ * <p>注册 {@link RedisMessageListenerContainer} 并订阅 {@value TwoLevelCaches#INVALIDATE_CHANNEL} 频道，
+ * 将淘汰事件分发至 {@link TwoLevelCaches} 剔除本地缓存。</p>
  */
 @Configuration(proxyBeanMethods = false)
 class CacheInvalidationConfig {
 
+    /**
+     * 注册 Redis 消息监听容器 Bean，绑定失效事件监听器与订阅频道。
+     *
+     * @param connectionFactory Redis 连接工厂
+     * @param caches            两级缓存管理器兼消息监听处理器
+     * @return 初始化的 Redis 消息监听容器实例
+     */
     @Bean
     RedisMessageListenerContainer cacheInvalidationListenerContainer(RedisConnectionFactory connectionFactory,
                                                                      TwoLevelCaches caches) {

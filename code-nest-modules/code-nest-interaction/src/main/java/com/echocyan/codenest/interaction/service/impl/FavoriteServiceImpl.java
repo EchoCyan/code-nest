@@ -24,6 +24,12 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * 文章收藏服务实现类。
+ *
+ * <p>基于关系表唯一键保障收藏与取消收藏的幂等性；联动 {@link CounterApi} 更新收藏数指标，
+ * 并实现 {@link CounterSource} 供计数对账系统重新统计。
+ */
 @Service
 @RequiredArgsConstructor
 public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite> implements FavoriteService,
@@ -43,7 +49,7 @@ public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite> i
         try {
             save(favorite);
         } catch (DuplicateKeyException e) {
-            // 已收藏过（包括并发的重复请求），不产生变化；MySQL 只回滚这一条语句，事务可以继续
+            // 已收藏（含并发重复请求）幂等忽略；单条语句回滚不影响外层事务继续执行
             return;
         }
         counterApi.increment(CounterMetric.ARTICLE_FAVORITE, articleId, 1);

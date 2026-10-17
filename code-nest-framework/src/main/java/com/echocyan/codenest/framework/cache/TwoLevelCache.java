@@ -18,65 +18,93 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Function;
 
 /**
- * 以 ID 为 key 的读缓存，采用 Cache-Aside：读取未命中时执行加载函数并回填，数据库更新后由写方调用 {@link #evict}。
- * 由 {@link TwoLevelCaches} 创建。
+ * 基于主键 ID 的读缓存组件（Cache-Aside 模式）。
  *
- * <p>Redis 中的 key 为 {@code cache:<name>:<id>}，值是 JSON，TTL 为 30 分钟加 0–5 分钟的随机抖动，
- * 避免同一批写入的 key 同时过期。加载结果为空时缓存一个 JSON {@code null}，TTL 60 秒，
- * 反复查询不存在的 ID 不会反复打到数据库。
+ * <p>支持纯 Redis 一级缓存或 Caffeine + Redis 两级缓存架构，统一由 {@link TwoLevelCaches} 构建：
+ * <ul>
+ *   <li><b>防雪崩：</b>基础 TTL 为 30 分钟并叠加 0~5 分钟随机抖动；</li>
+ *   <li><b>防穿透：</b>空值回填短生命周期（60 秒）标记，两级模式下可选布隆过滤器预检；</li>
+ *   <li><b>防击穿：</b>本地缓存基于 Caffeine 加载锁实现并发单飞回源（Single-Flight）；</li>
+ *   <li><b>广播失效：</b>两级模式下通过 Redis Pub/Sub 广播淘汰各节点本地缓存；</li>
+ *   <li><b>事务感知：</b>写操作在 Spring 事务提交后（{@code afterCommit}）执行缓存淘汰。</li>
+ * </ul>
+ * </p>
  *
- * <p><b>两级缓存：</b>经 {@link TwoLevelCaches#createTwoLevel} 创建的缓存多一级 Caffeine 本地缓存，
- * 最多 10000 条，写入 60 秒后过期。{@link #get} 的读取顺序是本地缓存 → 布隆过滤器 → Redis → 加载函数；
- * 布隆过滤器判定一定不存在的 ID 直接返回 null。本地缓存未命中时，同一实例上对同一个 ID 的并发请求只加载一次，
- * 防止热点 key 过期时击穿到数据库。{@link #getAll} 同样先读本地缓存，但不经过布隆过滤器。
- * 空值不放进本地缓存。本地缓存返回的是同一个对象，调用方不能修改它。
- *
- * <p><b>本地缓存失效：</b>{@link #evict} 删除 Redis 后清除本实例的本地缓存，再经 Redis Pub/Sub 频道
- * {@code cache:invalidate} 广播，其他实例收到后清除各自的本地缓存。Pub/Sub 不保证送达，漏收的实例最多读到
- * 60 秒的旧值，由本地缓存的过期时间兜底。
- *
- * <p><b>隐式行为：</b>{@link #evict} 在有活跃事务时推迟到事务提交后（afterCommit）执行，事务回滚则不删除；
- * 此时删除失败只记日志，不影响已提交的业务。没有事务时立即删除，失败直接抛出。
- *
- * <p><b>残留的竞态：</b>读请求未命中、从数据库读到旧值后停顿；这期间写请求更新数据库并删除缓存；
- * 读请求随后把旧值回填。旧值最多保留到 TTL 过期。窗口需要"读库比写库加删缓存还慢"，实际极小；
- * 写方经 MQ 再删一次（延迟双删）可以覆盖其中大部分情况。
- *
- * @param <V> 缓存值的类型
+ * @param <V> 缓存对象的数据类型
  */
 @Slf4j
 public class TwoLevelCache<V> {
 
+    /**
+     * Redis 基础缓存过期时间（30 分钟）。
+     */
     private static final Duration TTL = Duration.ofMinutes(30);
 
+    /**
+     * Redis 缓存随机抖动上限秒数（5 分钟 = 300 秒），实际过期时间为 30 到 35 分钟随机分布。
+     */
     private static final long TTL_JITTER_SECONDS = Duration.ofMinutes(5).toSeconds();
 
+    /**
+     * 针对空值标记缓存的存活时间（60 秒），防止缓存穿透。
+     */
     private static final Duration NULL_TTL = Duration.ofSeconds(60);
 
+    /**
+     * Caffeine 一级本地缓存的最大条目数上限（10,000 条），采用 W-TinyLFU 淘汰策略。
+     */
     private static final int LOCAL_MAXIMUM_SIZE = 10_000;
 
+    /**
+     * Caffeine 一级本地缓存的写入后过期时间（60 秒），作为跨节点广播丢失时的兜底时限。
+     */
     private static final Duration LOCAL_TTL = Duration.ofSeconds(60);
 
     /**
-     * 空值标记，即 JSON {@code null}；正常的缓存值是 JSON 对象，不会与它相同。
+     * 空值在 Redis 中的序列化占位符，即 JSON 文本 {@code "null"}。
      */
     private static final String NULL = "null";
 
+    /**
+     * 当前缓存组件在 Redis 中的 Key 前缀（如 {@code cache:article:detail:}）。
+     */
     private final String keyPrefix;
+
+    /**
+     * 缓存值实体类型的 Class 对象。
+     */
     private final Class<V> type;
+
+    /**
+     * Redis 字符串操作客户端。
+     */
     private final StringRedisTemplate redis;
+
+    /**
+     * JSON 序列化与反序列化工具。
+     */
     private final JsonMapper jsonMapper;
 
     /**
-     * 本地缓存，只在两级缓存中存在，否则为 null。
+     * 本地 Caffeine 缓存容器；仅在启用两级缓存时实例化，单级 Redis 缓存时为 {@code null}。
      */
     private final Cache<Long, V> local;
 
     /**
-     * 只在有本地缓存时使用。
+     * 布隆过滤器；仅在启用两级缓存且指定了过滤器时有效，用于前置拦截一定不存在的 ID。
      */
     private final BloomFilter bloomFilter;
 
+    /**
+     * 构造缓存组件实例，包级私有，仅由 {@link TwoLevelCaches} 工厂调用。
+     *
+     * @param name        缓存业务命名标识
+     * @param type        缓存实体 Class
+     * @param redis       Redis 客户端模板
+     * @param jsonMapper  JSON 映射器
+     * @param twoLevel    是否启用本地 Caffeine 一级缓存
+     * @param bloomFilter 布隆过滤器实例，为 {@code null} 时不进行布隆过滤
+     */
     TwoLevelCache(String name, Class<V> type, StringRedisTemplate redis, JsonMapper jsonMapper, boolean twoLevel,
                   BloomFilter bloomFilter) {
         this.keyPrefix = keyPrefixOf(name);
@@ -89,10 +117,22 @@ public class TwoLevelCache<V> {
         this.bloomFilter = bloomFilter;
     }
 
+    /**
+     * 根据业务名称生成 Redis 统一键前缀。
+     *
+     * @param name 业务标识名称
+     * @return 格式化后的 Redis 键前缀（格式为 {@code cache:<name>:}）
+     */
     static String keyPrefixOf(String name) {
         return "cache:" + name + ":";
     }
 
+    /**
+     * 根据序列化内容动态计算缓存存活时间。
+     *
+     * @param encoded 待缓存的 JSON 文本
+     * @return 若为 {@link #NULL} 标记返回短生命周期 {@link #NULL_TTL}；否则返回叠加随机抖动的标准 TTL
+     */
     private static Duration ttlOf(String encoded) {
         if (NULL.equals(encoded)) {
             return NULL_TTL;
@@ -101,10 +141,20 @@ public class TwoLevelCache<V> {
     }
 
     /**
-     * 读取一个值，未命中时执行 loader 并回填。
+     * 读取指定 ID 的缓存值；若未命中则调用加载函数回填后返回。
      *
-     * @param loader 从数据库加载，不存在时返回 null
-     * @return 不存在时为 null
+     * <p>在两级缓存模式下，请求按照如下顺序流转：
+     * <ol>
+     *   <li>检查 Caffeine 本地缓存，命中直接返回；</li>
+     *   <li>若配置了布隆过滤器，检查 ID 存在性，若布隆过滤器判定绝对不存在则直接返回 {@code null}；</li>
+     *   <li>查询 Redis L2 缓存，若命中有效值或空值占位符则返回；</li>
+     *   <li>执行 {@code loader} 回查底层数据库，并将结果回填至 Redis。</li>
+     * </ol>
+     * 本地缓存返回的是 JVM 共享内存对象，调用方不得直接修改其内部状态。
+     *
+     * @param id     业务主键 ID
+     * @param loader 数据库回源加载函数，入参为目标 ID，数据不存在时应返回 {@code null}
+     * @return 对应的缓存数据对象；若数据库中不存在则返回 {@code null}
      */
     public V get(long id, Function<Long, V> loader) {
         if (local == null) {
@@ -113,6 +163,13 @@ public class TwoLevelCache<V> {
         return local.get(id, key -> bloomFilter.mightContain(key) ? getFromRedis(key, loader) : null);
     }
 
+    /**
+     * 从 Redis 读取单条数据，未命中时调用加载函数回查并回填。
+     *
+     * @param id     业务主键 ID
+     * @param loader 数据库加载函数
+     * @return 业务数据或 {@code null}
+     */
     private V getFromRedis(long id, Function<Long, V> loader) {
         String key = key(id);
         String cached = redis.opsForValue().get(key);
@@ -126,10 +183,20 @@ public class TwoLevelCache<V> {
     }
 
     /**
-     * 批量读取，一次 {@code MGET}；未命中的 ID 合在一起执行一次 batchLoader，再用 pipeline 回填。
+     * 批量读取指定 ID 集合的缓存数据。
      *
-     * @param batchLoader 从数据库批量加载，不存在的 ID 不出现在结果中；只会收到非空的 ID 集合
-     * @return 以 ID 为 key；不存在的 ID 不出现在结果中
+     * <p>批量读取流程优化如下：
+     * <ol>
+     *   <li>首先在本地缓存（若启用）中批量检索；</li>
+     *   <li>未命中本地缓存的 ID 发起一次批量 Redis {@code MGET} 查询；</li>
+     *   <li>仍未命中的 ID 统一归集后，执行一次 {@code batchLoader} 批量回源加载数据库；</li>
+     *   <li>回源数据通过 Redis Pipeline 管道批量异步回填 Redis，降低网络往返开销。</li>
+     * </ol>
+     * 注意：为避免高基数场景下的网络往返放大，批量读取流程不经过布隆过滤器。
+     *
+     * @param ids         业务主键 ID 集合
+     * @param batchLoader 批量回源加载函数，仅接收在缓存中确实缺失的 ID 集合，返回 ID 到数据实体的映射表
+     * @return ID 到实体的映射 Map（仅包含实际存在的数据，不存在的 ID 不会出现在结果集中）
      */
     public Map<Long, V> getAll(Collection<Long> ids, Function<Collection<Long>, Map<Long, V>> batchLoader) {
         if (ids.isEmpty()) {
@@ -141,8 +208,15 @@ public class TwoLevelCache<V> {
         return local.getAll(ids, misses -> getAllFromRedis(List.copyOf(misses), batchLoader));
     }
 
+    /**
+     * 通过 Redis MGET 批量加载，对缺失的数据执行批量回源并通过 Pipeline 批量写回 Redis。
+     *
+     * @param ids         待查询的 ID 集合
+     * @param batchLoader 批量回源函数
+     * @return 查询结果映射 Map
+     */
     private Map<Long, V> getAllFromRedis(Collection<Long> ids,
-                                         Function<Collection<Long>, Map<Long, V>> batchLoader) {
+                                          Function<Collection<Long>, Map<Long, V>> batchLoader) {
         List<Long> distinct = ids.stream().distinct().toList();
         List<String> cached = redis.opsForValue().multiGet(distinct.stream().map(this::key).toList());
         Map<Long, V> result = new HashMap<>();
@@ -172,7 +246,13 @@ public class TwoLevelCache<V> {
     }
 
     /**
-     * 删除缓存，有本地缓存时同时广播失效。有活跃事务时推迟到提交后执行，见类注释。
+     * 显式淘汰指定 ID 的缓存。
+     *
+     * <p>若当前处于活跃的 Spring 数据库事务中，淘汰操作将推迟至事务成功提交后（{@code afterCommit}）执行；
+     * 若事务发生回滚则自动取消淘汰，避免网络抖动或事务失败时过早击毁有效缓存。
+     * 若处于无事务环境，则立即执行淘汰。两级模式下会自动通过 Redis Pub/Sub 广播失效通知。
+     *
+     * @param id 待淘汰的业务主键 ID
      */
     public void evict(long id) {
         String key = key(id);
@@ -193,7 +273,13 @@ public class TwoLevelCache<V> {
     }
 
     /**
-     * 先删 Redis 再清本地缓存，避免本实例从 Redis 读回旧值；最后广播，让其他实例清除各自的本地缓存。
+     * 立即执行物理淘汰。
+     *
+     * <p>遵循严谨的删除顺序：先删除 Redis 集中式缓存，再清理本节点 Caffeine 缓存，
+     * 避免当前节点在广播往返间隙重新从 Redis 读取到旧数据；最后通过 Pub/Sub 发布广播。
+     *
+     * @param id  业务主键 ID
+     * @param key 完整的 Redis Key
      */
     private void evictNow(long id, String key) {
         redis.delete(key);
@@ -204,7 +290,9 @@ public class TwoLevelCache<V> {
     }
 
     /**
-     * 收到失效广播时清除本地缓存。
+     * 响应远端节点的失效广播，从本地 Caffeine 缓存中淘汰对应 ID 的记录。
+     *
+     * @param id 待淘汰的业务主键 ID
      */
     void invalidateLocal(long id) {
         if (local != null) {
@@ -212,14 +300,32 @@ public class TwoLevelCache<V> {
         }
     }
 
+    /**
+     * 根据业务主键 ID 构造完整的 Redis 缓存 Key。
+     *
+     * @param id 业务主键 ID
+     * @return 完整的 Redis 键名
+     */
     private String key(long id) {
         return keyPrefix + id;
     }
 
+    /**
+     * 将业务实体序列化为 JSON 字符串；若为 {@code null} 则输出 {@link #NULL} 标记。
+     *
+     * @param value 待序列化的实体对象
+     * @return JSON 文本
+     */
     private String encode(V value) {
         return value == null ? NULL : jsonMapper.writeValueAsString(value);
     }
 
+    /**
+     * 将 JSON 文本反序列化为实体对象；若为 {@link #NULL} 标记则返回 {@code null}。
+     *
+     * @param json 缓存的 JSON 文本
+     * @return 业务实体对象或 {@code null}
+     */
     private V decode(String json) {
         return NULL.equals(json) ? null : jsonMapper.readValue(json, type);
     }

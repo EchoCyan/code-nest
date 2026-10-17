@@ -5,7 +5,13 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /**
- * 修改资料是整体替换：未提供的头像、简介会被清空。用户名不可修改，请求中的 username 字段会被忽略。
+ * 用户个人资料修改请求参数。
+ * <p>
+ * 采用整体覆盖更新语义：未传递的头像、个人简介将被清空；用户名属于不可修改字段。
+ *
+ * @param nickname  用户昵称（必填，最多 20 字符）
+ * @param avatarUrl 头像链接（可选，需为 http 或 https 地址，最多 512 字符）
+ * @param bio       个人简介（可选，最多 200 字符）
  */
 public record UpdateProfileRequest(
         @NotBlank @Size(max = 20) String nickname,

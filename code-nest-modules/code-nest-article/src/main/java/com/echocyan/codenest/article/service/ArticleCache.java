@@ -15,10 +15,7 @@ import java.util.Map;
 import java.util.function.Function;
 
 /**
- * 文章的缓存：详情是两级缓存，用布隆过滤器 {@code bf:article} 拦截不存在的文章 ID；摘要只用 Redis。
- * 读取与加载由 {@link ArticleReader} 负责。
- * <p>
- * 文章创建后调用 {@link #added}，编辑、发布、删除后调用 {@link #evict}，写方不需要知道有几份缓存。
+ * 文章缓存管理组件，维护文章详情（Caffeine + Redis）与摘要缓存。
  */
 @Component
 public class ArticleCache {
@@ -34,20 +31,22 @@ public class ArticleCache {
     }
 
     /**
-     * 读取文章详情。
+     * 读取文章详情缓存。
      *
-     * @param loader 未命中时从数据库加载，文章不存在或已删除时返回 null
-     * @return 文章不存在或已删除时为 null
+     * @param id     文章 ID
+     * @param loader 缓存未命中时的回源加载函数
+     * @return 文章详情缓存项；未命中且加载为空时返回 {@code null}
      */
     public Detail getDetail(long id, Function<Long, Detail> loader) {
         return details.get(id, loader);
     }
 
     /**
-     * 批量读取文章摘要。
+     * 批量读取文章摘要缓存。
      *
-     * @param loader 对未命中的 ID 调用一次，不存在的文章不放进结果
-     * @return 以文章 ID 为 key；不存在的文章不出现在结果中
+     * @param ids    文章 ID 集合
+     * @param loader 缺失键的回源加载函数
+     * @return 文章 ID 与摘要投影的映射
      */
     public Map<Long, ArticleBrief> getBriefs(Collection<Long> ids,
                                              Function<Collection<Long>, Map<Long, ArticleBrief>> loader) {
@@ -55,14 +54,18 @@ public class ArticleCache {
     }
 
     /**
-     * 文章创建后把 ID 加入布隆过滤器。可以在写库的事务里调用，事务回滚只会留下一个误判。
+     * 将文章 ID 添加至布隆过滤器。
+     *
+     * @param id 文章 ID
      */
     public void added(long id) {
         bloomFilter.add(id);
     }
 
     /**
-     * 文章编辑、发布、删除后删除详情和摘要缓存；有活跃事务时推迟到提交后执行。重复执行无害。
+     * 淘汰指定文章的详情与摘要缓存。
+     *
+     * @param id 文章 ID
      */
     public void evict(long id) {
         details.evict(id);
@@ -70,17 +73,21 @@ public class ArticleCache {
     }
 
     /**
-     * 布隆过滤器不存在（首次部署或 Redis 数据丢失）时按全部未删除文章（含草稿）的 ID 重建，见 {@link BloomFilter}。
+     * 当布隆过滤器不存在时执行全量重建。
      *
-     * @param idsAfter 返回大于给定 ID 的下一批 ID，按 ID 升序；参数为 null 时从头开始，返回空列表表示结束
+     * @param idsAfter 游标分页拉取文章 ID 的回调函数
      */
     public void rebuildBloomFilterIfAbsent(Function<Long, List<Long>> idsAfter) {
         bloomFilter.rebuildIfAbsent(idsAfter);
     }
 
     /**
-     * 缓存中的文章详情：元数据、正文、分类与标签。作者信息和计数经各自的门面另行组装，不放进缓存，
-     * 所以点赞、改昵称不会让它失效。
+     * 文章详情缓存结构。
+     *
+     * @param article  文章实体
+     * @param content  Markdown 正文
+     * @param category 所属分类
+     * @param tags     关联标签列表
      */
     public record Detail(Article article, String content, CategoryBrief category, List<TagVO> tags) {
     }

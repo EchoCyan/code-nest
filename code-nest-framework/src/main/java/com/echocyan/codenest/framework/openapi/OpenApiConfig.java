@@ -10,11 +10,24 @@ import org.springdoc.core.customizers.OperationCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * OpenAPI 3.0 接口文档配置。
+ *
+ * <p>配置 API 元数据、Bearer Token 认证机制，并根据 {@link SaIgnore} 动态标记受保护接口。</p>
+ */
 @Configuration(proxyBeanMethods = false)
 public class OpenApiConfig {
 
+    /**
+     * 全局 Bearer HTTP 认证方案的组件标识名称。
+     */
     private static final String BEARER = "bearer";
 
+    /**
+     * 构建并注入 OpenAPI 全局元数据及通用安全模式组件。
+     *
+     * @return 初始化的 {@link OpenAPI} 根对象
+     */
     @Bean
     public OpenAPI codeNestOpenApi() {
         return new OpenAPI()
@@ -30,7 +43,13 @@ public class OpenApiConfig {
     }
 
     /**
-     * 与 SaInterceptor 的规则保持一致：方法和类上都没有 {@link SaIgnore} 的接口才标注为需要登录。
+     * 构建接口操作定制器，动态标注需要认证登录的 API 端点。
+     *
+     * <p>严格与 {@link cn.dev33.satoken.interceptor.SaInterceptor} 保持一致的判定逻辑：
+     * 仅当处理方法本身以及所在的 Controller 类均未标注 {@link SaIgnore} 时，
+     * 才在文档的对应接口操作上挂载 {@value #BEARER} 安全依赖项。
+     *
+     * @return 用于处理单个操作元数据的 {@link OperationCustomizer} 实例
      */
     @Bean
     public OperationCustomizer loginRequirementCustomizer() {

@@ -11,11 +11,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 三张计数表共用的 SQL。表名、列名由调用方从枚举推导，不来自用户输入。
+ * 计数统计表通用 MyBatis 数据访问层。
+ *
+ * <p>提供文章、用户、评论三张计数统计表的公共 SQL 操作。表名与列名均由内部安全映射推导，不接受外部未受信任入参。
  */
 @Mapper
 public interface CounterMapper {
 
+    /**
+     * 重置单个对象的指定计数字段为绝对值；不存在对应行时执行插入。
+     *
+     * @param table    目标表名
+     * @param idColumn 主键 ID 列名
+     * @param column   计数字段列名
+     * @param id       对象 ID
+     * @param value    重置后的计数值
+     * @param now      当前时间戳
+     */
     @Insert("""
             INSERT INTO ${table} (${idColumn}, ${column}, created_at, updated_at)
             VALUES (#{id}, #{value}, #{now}, #{now})
@@ -25,7 +37,13 @@ public interface CounterMapper {
                @Param("id") long id, @Param("value") long value, @Param("now") LocalDateTime now);
 
     /**
-     * 批量写入绝对值，没有计数行时插入。每行依次是对象 ID 和 columns 中各列的值。
+     * 批量覆写多个对象的全量计数指标（绝对值）；不存在对应行时执行插入。
+     *
+     * @param table    目标表名
+     * @param idColumn 主键 ID 列名
+     * @param columns  各计数列名列表
+     * @param rows     批量数据行列表，每行包含主键 ID 及 columns 对应顺序的计数值
+     * @param now      当前时间戳
      */
     @Insert("""
             <script>
@@ -44,6 +62,14 @@ public interface CounterMapper {
                    @Param("columns") List<String> columns, @Param("rows") List<List<Long>> rows,
                    @Param("now") LocalDateTime now);
 
+    /**
+     * 批量查询指定 ID 集合的计数记录。
+     *
+     * @param table    目标表名
+     * @param idColumn 主键 ID 列名
+     * @param ids      对象 ID 集合
+     * @return 数据库行数据映射列表
+     */
     @Select("""
             <script>
             SELECT * FROM ${table} WHERE ${idColumn} IN
@@ -54,7 +80,14 @@ public interface CounterMapper {
                                           @Param("ids") Collection<Long> ids);
 
     /**
-     * ID 在 (afterId, upperId] 内、该列不为 0 的对象，走主键范围扫描。
+     * 查询指定主键区间 {@code (afterId, upperId]} 内该计数字段大于 0 的对象 ID 列表。
+     *
+     * @param table    目标表名
+     * @param idColumn 主键 ID 列名
+     * @param column   计数字段列名
+     * @param afterId  起始 ID（不含）
+     * @param upperId  截止 ID（含）
+     * @return 计数值大于 0 的对象 ID 列表
      */
     @Select("""
             SELECT ${idColumn} FROM ${table}
