@@ -17,11 +17,8 @@ class HotFormulaTest {
     private static final HotFormula DEFAULT = new HotFormula(3, 5, 4, 0.1, 1.5);
 
     private static Counts counts(long like, long favorite, long comment, long view) {
-        return new Counts(Map.of(
-                CounterMetric.ARTICLE_LIKE, like,
-                CounterMetric.ARTICLE_FAVORITE, favorite,
-                CounterMetric.ARTICLE_COMMENT, comment,
-                CounterMetric.ARTICLE_VIEW, view));
+        return new Counts(Map.of(CounterMetric.ARTICLE_LIKE, like, CounterMetric.ARTICLE_FAVORITE, favorite,
+                CounterMetric.ARTICLE_COMMENT, comment, CounterMetric.ARTICLE_VIEW, view));
     }
 
     @Test

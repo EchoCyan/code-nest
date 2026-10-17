@@ -28,15 +28,25 @@ class HotArticleApiTest extends ArticleTestSupport {
         RestTestClient other = withToken(register(uniqueUsername()));
         String cold = publish(author, createDraft(author, draft()));
         String hot = publish(author, createDraft(author, draft()));
-        reader.put().uri(API + "/articles/{id}/like", cold).exchange().expectStatus().isOk();
-        reader.put().uri(API + "/articles/{id}/like", hot).exchange().expectStatus().isOk();
-        other.put().uri(API + "/articles/{id}/like", hot).exchange().expectStatus().isOk();
-        reader.put().uri(API + "/articles/{id}/favorite", hot).exchange().expectStatus().isOk();
-        reader.post().uri(API + "/articles/{id}/comments", hot)
+        reader.put().uri(API + "/articles/{id}/like", cold)
+                .exchange()
+                .expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/like", hot)
+                .exchange()
+                .expectStatus().isOk();
+        other.put().uri(API + "/articles/{id}/like", hot)
+                .exchange()
+                .expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/favorite", hot)
+                .exchange()
+                .expectStatus().isOk();
+        reader.post()
+                .uri(API + "/articles/{id}/comments", hot)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("content", "好文"))
                 .exchange()
-                .expectStatus().isOk();
+                .expectStatus()
+                .isOk();
 
         // 计数可能异步生效，重算也可能恰好被其他上下文的定时任务占住锁，反复重算直到榜单反映出计数
         eventually(() -> {
@@ -59,8 +69,12 @@ class HotArticleApiTest extends ArticleTestSupport {
         RestTestClient author = withToken(register(uniqueUsername()));
         RestTestClient reader = withToken(register(uniqueUsername()));
         String article = publish(author, createDraft(author, draft()));
-        reader.put().uri(API + "/articles/{id}/favorite", article).exchange().expectStatus().isOk();
-        reader.put().uri(API + "/articles/{id}/like", article).exchange().expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/favorite", article)
+                .exchange()
+                .expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/like", article)
+                .exchange()
+                .expectStatus().isOk();
         eventually(() -> {
             hotArticleService.refresh();
             assertThat(readHotList()).contains(article);
@@ -76,12 +90,14 @@ class HotArticleApiTest extends ArticleTestSupport {
         client.get().uri(API + "/hot-articles?page=5")
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.size").isEqualTo(20);
+                .expectBody()
+                .jsonPath("$.data.size").isEqualTo(20);
         for (int page : new int[]{0, 6}) {
             client.get().uri(API + "/hot-articles?page={page}", page)
                     .exchange()
                     .expectStatus().isBadRequest()
-                    .expectBody().jsonPath("$.code").isEqualTo(90400);
+                    .expectBody()
+                    .jsonPath("$.code").isEqualTo(90400);
         }
     }
 

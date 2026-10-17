@@ -54,8 +54,8 @@ public abstract class IntegrationTest {
     @BeforeEach
     void setUpClient() {
         // HttpClient 默认会按 Retry-After 自动重试 429，测试需要直接看到 429
-        var requestFactory = new HttpComponentsClientHttpRequestFactory(
-                HttpClients.custom().disableAutomaticRetries().build());
+        var requestFactory =
+                new HttpComponentsClientHttpRequestFactory(HttpClients.custom().disableAutomaticRetries().build());
         client = RestTestClient.bindToServer(requestFactory).baseUrl("http://localhost:" + port).build();
     }
 
@@ -88,7 +88,8 @@ public abstract class IntegrationTest {
         user.get().uri(API + "/users/me")
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.id").value(String.class, id::set);
+                .expectBody()
+                .jsonPath("$.data.id").value(String.class, id::set);
         return id.get();
     }
 
@@ -96,17 +97,22 @@ public abstract class IntegrationTest {
      * 关注某个用户，由调用方断言结果。
      */
     protected RestTestClient.ResponseSpec follow(RestTestClient follower, String userId) {
-        return follower.put().uri(API + "/users/{id}/follow", userId).exchange();
+        return follower.put().uri(API + "/users/{id}/follow", userId)
+                .exchange();
     }
 
     private String authenticate(String path, String username) {
         AtomicReference<String> token = new AtomicReference<>();
-        client.post().uri(API + path)
+        client.post()
+                .uri(API + path)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("username", username, "password", PASSWORD))
                 .exchange()
-                .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.token").value(String.class, token::set);
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.data.token")
+                .value(String.class, token::set);
         return token.get();
     }
 }

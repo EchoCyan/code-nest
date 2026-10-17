@@ -11,13 +11,15 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 
 /**
- * 发布领域事件的唯一入口，投递语义为"至少一次"，重复消息由消费端幂等处理（见 {@link IdempotentConsumer}）。
- * <p>
- * {@link #publish} 必须在写库的同一个事务里调用：在当前事务里写入一条 {@code mq_outbox} 记录，方法本身不访问 broker，
- * 事件与业务数据一起提交或回滚。事务提交后（afterCommit）立即发送，收到 publisher confirm 后交给
- * {@link OutboxSentMarker} 批量标记为 SENT；
- * 发送失败或迟迟没有 confirm 的记录，由 {@link OutboxRelay} 按指数退避补发。没有活跃事务时直接抛出异常，
- * 忘了加 {@code @Transactional} 的调用在测试里就会暴露。
+ * 领域事件发布组件（Transactional Outbox 模式）。
+ *
+ * <p>保障跨服务/模块事件投递的最终一致性：
+ * <ul>
+ *   <li><b>事务同批落库：</b>必须在活跃事务中调用，事件载荷同业务操作持久化至 {@code mq_outbox} 表；</li>
+ *   <li><b>提交后异步投递：</b>通过 {@code afterCommit} 钩子推入 RabbitMQ，收到 ACK 后异步标记为 {@link OutboxStatus#SENT}；</li>
+ *   <li><b>失败补发兜底：</b>投递未成功或未确认的消息由 {@link OutboxRelay} 定时重试。</li>
+ * </ul>
+ * </p>
  */
 @Slf4j
 @Component
@@ -25,20 +27,39 @@ import java.time.Duration;
 public class DomainEventPublisher {
 
     /**
-     * 等待 publisher confirm 的时间。
+     * 等待 RabbitMQ Broker Publisher Confirm 确认的最长超时时限（5 秒）。
      */
     static final Duration CONFIRM_TIMEOUT = Duration.ofSeconds(5);
 
+    /**
+     * Outbox 数据库持久化访问 Mapper。
+     */
     private final MqOutboxMapper outboxMapper;
+
+    /**
+     * 底层 AMQP 消息发送执行器。
+     */
     private final EventSender sender;
+
+    /**
+     * 事件 Payload 序列化工具。
+     */
     private final JsonMapper jsonMapper;
+
+    /**
+     * 已确认消息批量状态更新器。
+     */
     private final OutboxSentMarker sentMarker;
 
     /**
-     * 在当前事务里发布事件，路由键取自事件类上的 {@link DomainEvent}。
+     * 在当前活跃事务中发布领域事件。
      *
-     * @throws IllegalArgumentException 事件类没有标注 {@link DomainEvent}
-     * @throws IllegalStateException    没有活跃事务
+     * <p>事件类型必须标注 {@link DomainEvent} 注解以提取 AMQP 路由键。
+     * 首次重试延迟将留出事务提交与首次异步发送的窗口期，避免定时任务过早抢发。
+     *
+     * @param event 待发布的领域事件对象（必须标注了 {@link DomainEvent}）
+     * @throws IllegalArgumentException 若事件类缺少 {@link DomainEvent} 注解
+     * @throws IllegalStateException    若当前执行线程中不存在活跃的本地数据库事务
      */
     public void publish(Object event) {
         DomainEvent domainEvent = event.getClass().getAnnotation(DomainEvent.class);
@@ -46,8 +67,8 @@ public class DomainEventPublisher {
             throw new IllegalArgumentException(event.getClass().getName() + " is not annotated with @DomainEvent");
         }
         if (!TransactionSynchronizationManager.isActualTransactionActive()) {
-            throw new IllegalStateException("Domain events must be published in a transaction: "
-                    + event.getClass().getName());
+            throw new IllegalStateException(
+                    "Domain events must be published in a transaction: " + event.getClass().getName());
         }
         MqOutbox outbox = new MqOutbox();
         outbox.setRoutingKey(domainEvent.value());
@@ -67,7 +88,12 @@ public class DomainEventPublisher {
     }
 
     /**
-     * 事务已经提交，这里的任何失败都只记日志，交给补发任务处理。
+     * 事务成功提交后异步投递 Outbox 消息并注册确认回调。
+     *
+     * <p>此时本地事务已完全提交，本方法内的任何网络异常仅记录日志，
+     * 未确认的消息交由后台补发定时任务处理。
+     *
+     * @param outbox 待投递的发件箱记录实体
      */
     private void sendOutbox(MqOutbox outbox) {
         long id = outbox.getId();

@@ -22,7 +22,8 @@ class CommentApiTest extends IntegrationTest {
 
     private static String idOf(RestTestClient.ResponseSpec response) {
         AtomicReference<String> id = new AtomicReference<>();
-        response.expectBody().jsonPath("$.data.id").value(String.class, id::set);
+        response.expectBody()
+                .jsonPath("$.data.id").value(String.class, id::set);
         return id.get();
     }
 
@@ -54,12 +55,14 @@ class CommentApiTest extends IntegrationTest {
         RestTestClient author = withToken(register(uniqueUsername()));
         String draft = draft(author);
         String deleted = publish(author, draft(author));
-        author.delete().uri(API + "/articles/{id}", deleted).exchange().expectStatus().isOk();
+        author.delete().uri(API + "/articles/{id}", deleted)
+                .exchange()
+                .expectStatus().isOk();
 
         for (String article : List.of(draft, deleted, "1")) {
-            postComment(author, article, "写得好")
-                    .expectStatus().isNotFound()
-                    .expectBody().jsonPath("$.code").isEqualTo(20001);
+            postComment(author, article, "写得好").expectStatus().isNotFound()
+                    .expectBody()
+                    .jsonPath("$.code").isEqualTo(20001);
             client.get().uri(API + "/articles/{id}/comments", article)
                     .exchange()
                     .expectStatus().isNotFound();
@@ -73,9 +76,9 @@ class CommentApiTest extends IntegrationTest {
 
         comment(reader, article, "评".repeat(1000));
         for (String content : List.of("评".repeat(1001), " ")) {
-            postComment(reader, article, content)
-                    .expectStatus().isBadRequest()
-                    .expectBody().jsonPath("$.code").isEqualTo(90400);
+            postComment(reader, article, content).expectStatus().isBadRequest()
+                    .expectBody()
+                    .jsonPath("$.code").isEqualTo(90400);
         }
     }
 
@@ -126,7 +129,8 @@ class CommentApiTest extends IntegrationTest {
             client.get().uri(API + "/articles/{id}/comments?size={size}", article, size)
                     .exchange()
                     .expectStatus().isBadRequest()
-                    .expectBody().jsonPath("$.code").isEqualTo(90400);
+                    .expectBody()
+                    .jsonPath("$.code").isEqualTo(90400);
         }
     }
 
@@ -182,7 +186,8 @@ class CommentApiTest extends IntegrationTest {
         client.get().uri(API + "/comments/{id}/replies", firstReply)
                 .exchange()
                 .expectStatus().isNotFound()
-                .expectBody().jsonPath("$.code").isEqualTo(20005);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(20005);
     }
 
     @Test
@@ -215,16 +220,16 @@ class CommentApiTest extends IntegrationTest {
         String outsiderId = userIdOf(outsider);
 
         postReply(withToken(register(uniqueUsername())), commentId,
-                Map.of("content", "@路人", "replyToUserId", outsiderId))
-                .expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.code").isEqualTo(20006);
+                Map.of("content", "@路人", "replyToUserId", outsiderId)).expectStatus().isBadRequest()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(20006);
     }
 
     @Test
     void replyingToAnUnknownCommentIsNotFound() {
-        postReply(withToken(register(uniqueUsername())), "1", Map.of("content", "同意"))
-                .expectStatus().isNotFound()
-                .expectBody().jsonPath("$.code").isEqualTo(20005);
+        postReply(withToken(register(uniqueUsername())), "1", Map.of("content", "同意")).expectStatus().isNotFound()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(20005);
         client.get().uri(API + "/comments/{id}/replies", "1")
                 .exchange()
                 .expectStatus().isNotFound();
@@ -265,7 +270,8 @@ class CommentApiTest extends IntegrationTest {
 
         client.get().uri(API + "/articles/{id}/comments", article)
                 .exchange()
-                .expectBody().jsonPath("$.data.list[*].id").isEqualTo(List.of(kept));
+                .expectBody()
+                .jsonPath("$.data.list[*].id").isEqualTo(List.of(kept));
         expectCommentCount(article, 1);
     }
 
@@ -289,7 +295,8 @@ class CommentApiTest extends IntegrationTest {
         client.get().uri(API + "/comments/{id}/replies", commentId)
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.list[*].id").isEqualTo(List.of(replyId));
+                .expectBody()
+                .jsonPath("$.data.list[*].id").isEqualTo(List.of(replyId));
         expectCommentCount(article, 1);
     }
 
@@ -306,7 +313,8 @@ class CommentApiTest extends IntegrationTest {
 
         client.get().uri(API + "/articles/{id}/comments", article)
                 .exchange()
-                .expectBody().jsonPath("$.data.list").isEmpty();
+                .expectBody()
+                .jsonPath("$.data.list").isEmpty();
         expectCommentCount(article, 0);
     }
 
@@ -322,10 +330,12 @@ class CommentApiTest extends IntegrationTest {
 
         client.get().uri(API + "/comments/{id}/replies", commentId)
                 .exchange()
-                .expectBody().jsonPath("$.data.list[*].id").isEqualTo(List.of(kept));
+                .expectBody()
+                .jsonPath("$.data.list[*].id").isEqualTo(List.of(kept));
         eventually(() -> client.get().uri(API + "/articles/{id}/comments", article)
                 .exchange()
-                .expectBody().jsonPath("$.data.list[0].replyCount").isEqualTo(1));
+                .expectBody()
+                .jsonPath("$.data.list[0].replyCount").isEqualTo(1));
         expectCommentCount(article, 2);
     }
 
@@ -336,12 +346,12 @@ class CommentApiTest extends IntegrationTest {
         String commentId = comment(commenter, article, "写得好");
         delete(commenter, commentId).expectStatus().isOk();
 
-        postReply(commenter, commentId, Map.of("content", "同意"))
-                .expectStatus().isNotFound()
-                .expectBody().jsonPath("$.code").isEqualTo(20005);
-        delete(commenter, commentId)
-                .expectStatus().isNotFound()
-                .expectBody().jsonPath("$.code").isEqualTo(20005);
+        postReply(commenter, commentId, Map.of("content", "同意")).expectStatus().isNotFound()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(20005);
+        delete(commenter, commentId).expectStatus().isNotFound()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(20005);
         expectCommentCount(article, 0);
     }
 
@@ -350,12 +360,13 @@ class CommentApiTest extends IntegrationTest {
         String article = publishedArticle();
         String commentId = comment(withToken(register(uniqueUsername())), article, "写得好");
 
-        delete(withToken(register(uniqueUsername())), commentId)
-                .expectStatus().isForbidden()
-                .expectBody().jsonPath("$.code").isEqualTo(90403);
+        delete(withToken(register(uniqueUsername())), commentId).expectStatus().isForbidden()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90403);
         client.get().uri(API + "/articles/{id}/comments", article)
                 .exchange()
-                .expectBody().jsonPath("$.data.list[*].id").isEqualTo(List.of(commentId));
+                .expectBody()
+                .jsonPath("$.data.list[*].id").isEqualTo(List.of(commentId));
     }
 
     @Test
@@ -368,25 +379,27 @@ class CommentApiTest extends IntegrationTest {
         delete(reader, deletedId).expectStatus().isOk();
         long readerId = Long.parseLong(userIdOf(reader));
 
-        Map<Long, CommentBrief> briefs = articleApi.getCommentBriefs(Stream.of(commentId, replyId, deletedId, "1")
-                .map(Long::valueOf)
-                .toList());
+        Map<Long, CommentBrief> briefs =
+                articleApi.getCommentBriefs(Stream.of(commentId, replyId, deletedId, "1").map(Long::valueOf).toList());
 
         assertThat(briefs).containsOnlyKeys(Long.valueOf(commentId), Long.valueOf(replyId));
-        assertThat(briefs.get(Long.valueOf(replyId))).isEqualTo(new CommentBrief(
-                Long.valueOf(replyId), Long.valueOf(article), readerId, Long.valueOf(commentId), "同意"));
+        assertThat(briefs.get(Long.valueOf(replyId))).isEqualTo(
+                new CommentBrief(Long.valueOf(replyId), Long.valueOf(article), readerId, Long.valueOf(commentId),
+                        "同意"));
         assertThat(briefs.get(Long.valueOf(commentId)).rootId()).isZero();
     }
 
     private RestTestClient.ResponseSpec delete(RestTestClient user, String commentId) {
-        return user.delete().uri(API + "/comments/{id}", commentId).exchange();
+        return user.delete().uri(API + "/comments/{id}", commentId)
+                .exchange();
     }
 
     private String userIdOf(RestTestClient user) {
         AtomicReference<String> id = new AtomicReference<>();
         user.get().uri(API + "/users/me")
                 .exchange()
-                .expectBody().jsonPath("$.data.id").value(String.class, id::set);
+                .expectBody()
+                .jsonPath("$.data.id").value(String.class, id::set);
         return id.get();
     }
 
@@ -395,7 +408,8 @@ class CommentApiTest extends IntegrationTest {
     }
 
     private RestTestClient.ResponseSpec postReply(RestTestClient user, String commentId, Map<String, Object> body) {
-        return user.post().uri(API + "/comments/{id}/replies", commentId)
+        return user.post()
+                .uri(API + "/comments/{id}/replies", commentId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
                 .exchange();
@@ -405,7 +419,8 @@ class CommentApiTest extends IntegrationTest {
         eventually(() -> client.get().uri(API + "/articles/{id}", articleId)
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.counts.commentCount").isEqualTo(expected));
+                .expectBody()
+                .jsonPath("$.data.counts.commentCount").isEqualTo(expected));
     }
 
     /**
@@ -417,15 +432,19 @@ class CommentApiTest extends IntegrationTest {
     }
 
     private String draft(RestTestClient author) {
-        return idOf(author.post().uri(API + "/articles")
+        return idOf(author.post()
+                .uri(API + "/articles")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("title", "评论测试", "content", "正文", "categoryId", 1))
                 .exchange()
-                .expectStatus().isOk());
+                .expectStatus()
+                .isOk());
     }
 
     private String publish(RestTestClient author, String articleId) {
-        author.post().uri(API + "/articles/{id}/publish", articleId).exchange().expectStatus().isOk();
+        author.post().uri(API + "/articles/{id}/publish", articleId)
+                .exchange()
+                .expectStatus().isOk();
         return articleId;
     }
 
@@ -434,7 +453,8 @@ class CommentApiTest extends IntegrationTest {
     }
 
     private RestTestClient.ResponseSpec postComment(RestTestClient user, String articleId, String content) {
-        return user.post().uri(API + "/articles/{id}/comments", articleId)
+        return user.post()
+                .uri(API + "/articles/{id}/comments", articleId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("content", content))
                 .exchange();

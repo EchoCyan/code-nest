@@ -2,8 +2,16 @@ package com.echocyan.codenest.article.service;
 
 import com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.echocyan.codenest.article.api.*;
+import com.echocyan.codenest.article.api.ArticleApi;
+import com.echocyan.codenest.article.api.ArticleBrief;
+import com.echocyan.codenest.article.api.ArticleCounts;
 import com.echocyan.codenest.article.api.ArticleErrorCode;
+import com.echocyan.codenest.article.api.ArticleItem;
+import com.echocyan.codenest.article.api.ArticleSnapshot;
+import com.echocyan.codenest.article.api.ArticleState;
+import com.echocyan.codenest.article.api.ArticleStatus;
+import com.echocyan.codenest.article.api.CategoryBrief;
+import com.echocyan.codenest.article.api.CommentBrief;
 import com.echocyan.codenest.article.convert.ArticleConverter;
 import com.echocyan.codenest.article.convert.CategoryConverter;
 import com.echocyan.codenest.article.convert.CommentConverter;
@@ -27,15 +35,19 @@ import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 文章的全部读取：模块门面 {@link ArticleApi}，以及详情、最新文章、作者文章、草稿等模块内的读取。
+ * 文章读服务聚合组件，实现 {@link ArticleApi}。
  * <p>
- * 可见性规则、各种投影的组装与缓存的加载都在这里；写方只通过 {@link ArticleCache#added}、{@link ArticleCache#evict}
- * 通知变更。启动时（所有单例创建完后）如果布隆过滤器不存在，按全部未删除文章（含草稿）的 ID 重建。
+ * 提供文章详情、列表检索与跨模块数据装配。
  */
 @Component
 @RequiredArgsConstructor
@@ -60,11 +72,17 @@ public class ArticleReader implements ArticleApi, SmartInitializingSingleton {
     private final CounterApi counterApi;
 
     private static ArticleCounts countsOf(Counts counts) {
-        return new ArticleCounts(
-                counts.get(CounterMetric.ARTICLE_LIKE),
-                counts.get(CounterMetric.ARTICLE_FAVORITE),
-                counts.get(CounterMetric.ARTICLE_COMMENT),
-                counts.get(CounterMetric.ARTICLE_VIEW));
+        return new ArticleCounts(counts.get(CounterMetric.ARTICLE_LIKE), counts.get(CounterMetric.ARTICLE_FAVORITE),
+                counts.get(CounterMetric.ARTICLE_COMMENT), counts.get(CounterMetric.ARTICLE_VIEW));
+    }
+
+    /**
+     * 为文章查询追加基于 ID 游标的增量范围限制与升序排序。
+     */
+    private static LambdaQueryChainWrapper<Article> idsAfter(LambdaQueryChainWrapper<Article> query,
+                                                             Long afterId,
+                                                             int limit) {
+        return query.gt(afterId != null, Article::getId, afterId).orderByAsc(Article::getId).last("LIMIT " + limit);
     }
 
     @Override
@@ -74,7 +92,8 @@ public class ArticleReader implements ArticleApi, SmartInitializingSingleton {
 
     @Override
     public Map<Long, ArticleBrief> getBriefs(Collection<Long> articleIds) {
-        return articleCache.getBriefs(articleIds, missing -> articleService.listByIds(missing).stream()
+        return articleCache.getBriefs(articleIds, missing -> articleService.listByIds(missing)
+                .stream()
                 .map(articleConverter::toBrief)
                 .collect(Collectors.toMap(ArticleBrief::id, Function.identity())));
     }
@@ -114,17 +133,19 @@ public class ArticleReader implements ArticleApi, SmartInitializingSingleton {
         if (commentIds.isEmpty()) {
             return Map.of();
         }
-        return commentService.listByIds(commentIds).stream()
+        return commentService.listByIds(commentIds)
+                .stream()
                 .map(commentConverter::toBrief)
                 .collect(Collectors.toMap(CommentBrief::id, Function.identity()));
     }
 
     /**
-     * 文章详情。草稿只有作者本人能看到，对其他人表现为不存在；已发布的文章每次查看浏览量 +1。
-     * 元数据、正文、分类与标签经缓存读取，作者信息与计数每次另行组装。
+     * 查询文章详情。草稿仅作者可见，已发布文章递增浏览量。
      *
-     * @param viewerId 当前访客，匿名时为 null
-     * @throws BizException {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
+     * @param id       文章 ID
+     * @param viewerId 当前访问者用户 ID；匿名访问时为 {@code null}
+     * @return 文章详情完整视图对象
+     * @throws BizException 若文章不存在、已删除或非作者访问草稿抛出 {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
      */
     public ArticleDetailVO getDetail(long id, Long viewerId) {
         ArticleCache.Detail detail = articleCache.getDetail(id, this::loadDetail);
@@ -138,20 +159,19 @@ public class ArticleReader implements ArticleApi, SmartInitializingSingleton {
         if (article.getStatus() == ArticleStatus.PUBLISHED) {
             counterApi.increment(CounterMetric.ARTICLE_VIEW, id, 1);
         }
-        return articleConverter.toDetailVO(
-                article,
-                detail.content(),
-                detail.category(),
-                detail.tags(),
+        return articleConverter.toDetailVO(article, detail.content(), detail.category(), detail.tags(),
                 userApi.getBriefs(List.of(article.getAuthorId())).get(article.getAuthorId()),
                 countsOf(counterApi.get(CounterTarget.ARTICLE, List.of(id)).get(id)));
     }
 
     /**
-     * 最新发布的文章，按发布时间倒序、同一秒发布的按 ID 倒序，页码分页。
+     * 分页查询最新发布的有效文章，按发布时间降序排列（同秒发布的按 ID 降序）。
      *
-     * @param categoryId 为 null 时不按分类筛选
-     * @param tagId      为 null 时不按标签筛选
+     * @param categoryId 分类筛选条件；为 {@code null} 时不过滤
+     * @param tagId      标签筛选条件；为 {@code null} 时不过滤
+     * @param page       页码（从 1 开始）
+     * @param size       每页记录数
+     * @return 文章列表复合展示项的分页结果
      */
     public PageResult<ArticleItem> pageLatest(Long categoryId, Long tagId, long page, long size) {
         Page<Article> result = articleService.lambdaQuery()
@@ -166,14 +186,24 @@ public class ArticleReader implements ArticleApi, SmartInitializingSingleton {
     }
 
     /**
-     * 某位作者已发布的文章，按文章 ID 倒序，游标分页。
+     * 基于游标分页查询指定作者已发布的有效文章列表，按文章 ID 降序排列。
+     *
+     * @param authorId 作者用户 ID
+     * @param cursor   游标偏移量（上一页最后一条记录的 ID），首批传 {@code null}
+     * @param size     单页记录数
+     * @return 游标分页结果
      */
     public CursorResult<ArticleItem> listPublishedByAuthor(long authorId, Long cursor, int size) {
         return toCursorResult(authorArticles(authorId, ArticleStatus.PUBLISHED, cursor, size), size);
     }
 
     /**
-     * 作者自己的草稿，按文章 ID 倒序，游标分页。
+     * 基于游标分页查询当前作者自己的草稿列表，按文章 ID 降序排列。
+     *
+     * @param authorId 作者用户 ID
+     * @param cursor   游标偏移量（上一页最后一条记录的 ID），首批传 {@code null}
+     * @param size     单页记录数
+     * @return 游标分页结果
      */
     public CursorResult<ArticleItem> listDrafts(long authorId, Long cursor, int size) {
         return toCursorResult(authorArticles(authorId, ArticleStatus.DRAFT, cursor, size), size);
@@ -185,7 +215,7 @@ public class ArticleReader implements ArticleApi, SmartInitializingSingleton {
     }
 
     /**
-     * 作者某一状态的文章，按 ID 倒序，多取一条用于判断是否还有下一页。
+     * 查询指定作者处于指定状态的文章列表，超量获取 1 条以支持游标分页边界判定。
      */
     private List<Article> authorArticles(long authorId, ArticleStatus status, Long cursor, int size) {
         return articleService.lambdaQuery()
@@ -198,95 +228,94 @@ public class ArticleReader implements ArticleApi, SmartInitializingSingleton {
     }
 
     /**
-     * 一批已发布的文章，按文章 ID 正序。
+     * 基于游标批量获取已发布文章列表，按文章 ID 升序排列。
      *
-     * @param afterId 只返回 ID 大于它的文章；为 null 时从头开始
+     * @param afterId 游标偏移量，仅返回 ID 大于该值的记录；为 {@code null} 时从起始遍历
+     * @param limit   单批返回的最大记录数
+     * @return 已发布文章列表
      */
     private List<Article> listPublishedAfter(Long afterId, int limit) {
-        return idsAfter(articleService.lambdaQuery().eq(Article::getStatus, ArticleStatus.PUBLISHED), afterId, limit)
-                .list();
+        return idsAfter(articleService.lambdaQuery().eq(Article::getStatus, ArticleStatus.PUBLISHED), afterId,
+                limit).list();
     }
 
     /**
-     * 一批未删除文章（含草稿）的 ID，按 ID 正序，用于重建布隆过滤器。
+     * 基于游标批量获取有效文章（包含草稿，未软删除）的 ID 列表，专用于布隆过滤器全量初始化。
      *
-     * @param afterId 只返回大于它的 ID；为 null 时从头开始
+     * @param afterId 游标偏移量，仅返回 ID 大于该值的记录；为 {@code null} 时从起始遍历
+     * @return 文章 ID 列表
      */
     private List<Long> listIdsAfter(Long afterId) {
-        return idsAfter(articleService.lambdaQuery().select(Article::getId), afterId, REBUILD_BATCH)
-                .list()
+        return idsAfter(articleService.lambdaQuery().select(Article::getId), afterId, REBUILD_BATCH).list()
                 .stream()
                 .map(Article::getId)
                 .toList();
     }
 
-    private static LambdaQueryChainWrapper<Article> idsAfter(LambdaQueryChainWrapper<Article> query, Long afterId,
-                                                             int limit) {
-        return query
-                .gt(afterId != null, Article::getId, afterId)
-                .orderByAsc(Article::getId)
-                .last("LIMIT " + limit);
-    }
-
+    /**
+     * 将超量拉取的实体列表封装为包含 {@code nextCursor} 与 {@code hasMore} 的游标分页结果。
+     */
     private CursorResult<ArticleItem> toCursorResult(List<Article> fetched, int size) {
         CursorResult<Article> page = CursorResult.ofOverfetched(fetched, size, Article::getId);
         return new CursorResult<>(toItems(toBriefs(page.list())), page.nextCursor(), page.hasMore());
     }
 
+    /**
+     * 将文章实体列表批量转换为摘要投影列表。
+     */
     private List<ArticleBrief> toBriefs(List<Article> articles) {
         return articles.stream().map(articleConverter::toBrief).toList();
     }
 
     /**
-     * 批量补全分类、作者与计数，保持传入顺序。
+     * 批量补齐分类、作者简要信息与实时互动统计，生成文章列表项投影（严格保持入参顺序）。
      */
     private List<ArticleItem> toItems(List<ArticleBrief> articles) {
         if (articles.isEmpty()) {
             return List.of();
         }
-        Map<Long, CategoryBrief> categories = categoryService.listByIds(
-                        articles.stream().map(ArticleBrief::categoryId).distinct().toList()).stream()
-                .collect(Collectors.toMap(Category::getId, categoryConverter::toBrief));
+        Map<Long, CategoryBrief> categories =
+                categoryService.listByIds(articles.stream().map(ArticleBrief::categoryId).distinct().toList())
+                        .stream()
+                        .collect(Collectors.toMap(Category::getId, categoryConverter::toBrief));
         Map<Long, UserBrief> authors =
                 userApi.getBriefs(articles.stream().map(ArticleBrief::authorId).distinct().toList());
         Map<Long, Counts> counts =
                 counterApi.get(CounterTarget.ARTICLE, articles.stream().map(ArticleBrief::id).toList());
         return articles.stream()
-                .map(article -> articleConverter.toItem(
-                        article,
-                        categories.get(article.categoryId()),
-                        authors.get(article.authorId()),
-                        countsOf(counts.get(article.id()))))
+                .map(article -> articleConverter.toItem(article, categories.get(article.categoryId()),
+                        authors.get(article.authorId()), countsOf(counts.get(article.id()))))
                 .toList();
     }
 
     /**
-     * 批量补全正文与标签，组装成快照，保持传入顺序；已删除的文章也可以传入。
+     * 批量补齐 Markdown 正文全文与关联标签，生成完整快照列表（支持包含已删除文章，严格保持入参顺序）。
      */
     private List<ArticleSnapshot> toSnapshots(List<Article> articles) {
         if (articles.isEmpty()) {
             return List.of();
         }
         List<Long> ids = articles.stream().map(Article::getId).toList();
-        Map<Long, String> contents = articleContentService.listByIds(ids).stream()
+        Map<Long, String> contents = articleContentService.listByIds(ids)
+                .stream()
                 .collect(Collectors.toMap(ArticleContent::getArticleId, ArticleContent::getContent));
         Map<Long, List<Long>> tagIds = articleTagService.listTagIds(ids);
-        Map<Long, String> tagNames = tagService.listInOrder(
-                        tagIds.values().stream().flatMap(List::stream).distinct().toList()).stream()
-                .collect(Collectors.toMap(Tag::getId, Tag::getName));
-        return articles.stream()
-                .map(article -> {
-                    List<Long> ownTagIds = tagIds.getOrDefault(article.getId(), List.of());
-                    return articleConverter.toSnapshot(article, contents.get(article.getId()), ownTagIds,
-                            ownTagIds.stream().map(tagNames::get).toList());
-                })
-                .toList();
+        Map<Long, String> tagNames =
+                tagService.listInOrder(tagIds.values().stream().flatMap(List::stream).distinct().toList())
+                        .stream()
+                        .collect(Collectors.toMap(Tag::getId, Tag::getName));
+        return articles.stream().map(article -> {
+            List<Long> ownTagIds = tagIds.getOrDefault(article.getId(), List.of());
+            return articleConverter.toSnapshot(article, contents.get(article.getId()), ownTagIds,
+                    ownTagIds.stream().map(tagNames::get).toList());
+        }).toList();
     }
 
     /**
-     * 从数据库加载详情中可缓存的部分。
+     * 回源查询文章详情中适合放入多级缓存的核心数据（元数据、正文、分类与标签）。
      *
-     * @return 文章不存在或已删除时为 null
+     * @param id 文章 ID
+     * @return 文章详情缓存项；若文章不存在或已软删除则返回 {@code null}
      */
     private ArticleCache.Detail loadDetail(long id) {
         Article article = articleService.getById(id);
@@ -298,10 +327,7 @@ public class ArticleReader implements ArticleApi, SmartInitializingSingleton {
         for (int i = 0; i < snapshot.tagIds().size(); i++) {
             tags.add(new TagVO(snapshot.tagIds().get(i), snapshot.tagNames().get(i)));
         }
-        return new ArticleCache.Detail(
-                article,
-                snapshot.content(),
-                categoryConverter.toBrief(categoryService.getById(article.getCategoryId())),
-                tags);
+        return new ArticleCache.Detail(article, snapshot.content(),
+                categoryConverter.toBrief(categoryService.getById(article.getCategoryId())), tags);
     }
 }

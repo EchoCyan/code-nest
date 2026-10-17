@@ -9,19 +9,27 @@ import org.apache.ibatis.annotations.Select;
 import java.util.List;
 
 /**
- * 自定义 SQL 不经过 {@code @TableLogic} 的自动过滤，已删除的行也会查到，用于"该评论已删除"的展示。
+ * 评论与回复 Mapper 接口。
  */
 @Mapper
 public interface CommentMapper extends BaseMapper<Comment> {
 
     /**
-     * 按 ID 查询，包括已删除的。
+     * 根据主键查询评论或回复实体（包含已被软删除的记录）。
+     *
+     * @param id 评论或回复 ID
+     * @return 评论或回复实体；若不存在则返回 {@code null}
      */
     @Select("SELECT * FROM comment WHERE id = #{id}")
     Comment selectByIdIncludingDeleted(long id);
 
     /**
-     * 文章中 ID 小于 cursor 的评论，按 ID 倒序；已删除的评论只有下面还有回复时才返回。
+     * 查询指定文章下可见的一级评论列表（未删除，或已删除但含有未删除子回复），按 ID 降序排列。
+     *
+     * @param articleId 所属文章 ID
+     * @param cursor    游标偏移量，仅返回 ID 小于该值的记录
+     * @param limit     单批返回的最大记录数
+     * @return 一级评论列表
      */
     @Select("""
             SELECT * FROM comment c
@@ -35,7 +43,11 @@ public interface CommentMapper extends BaseMapper<Comment> {
     List<Comment> selectVisibleComments(long articleId, long cursor, int limit);
 
     /**
-     * 文章 ID 大于 afterId 的各文章未删除的评论与回复数，按文章 ID 升序。
+     * 基于游标批量统计各文章未删除的评论与回复总数，按文章 ID 升序排列。
+     *
+     * @param afterId 文章 ID 游标，仅统计大于该值的记录
+     * @param limit   单批返回的最大分组数
+     * @return 文章 ID 与有效评论回复总数的统计结果列表
      */
     @Select("""
             SELECT article_id, COUNT(*) FROM comment
@@ -45,7 +57,13 @@ public interface CommentMapper extends BaseMapper<Comment> {
     List<IdCount> countByArticle(long afterId, int limit);
 
     /**
-     * 评论 ID 大于 afterId 的各评论未删除的回复数，按评论 ID 升序。
+     * 基于游标批量统计各根评论未删除的有效回复总数，按根评论 ID 升序排列。
+     * <p>
+     * 专供计数模块执行 {@code COMMENT_REPLY} 指标的数据校准。
+     *
+     * @param afterId 根评论 ID 游标，仅统计大于该值的记录
+     * @param limit   单批返回的最大分组数
+     * @return 根评论 ID 与有效回复总数的统计结果列表
      */
     @Select("""
             SELECT root_id, COUNT(*) FROM comment

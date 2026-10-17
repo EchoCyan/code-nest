@@ -65,7 +65,8 @@ class ArticleListApiTest extends ArticleTestSupport {
         AtomicReference<Long> total = new AtomicReference<>();
         client.get().uri(API + uri)
                 .exchange()
-                .expectBody().jsonPath("$.data.total").value(Long.class, total::set);
+                .expectBody()
+                .jsonPath("$.data.total").value(Long.class, total::set);
         return total.get();
     }
 
@@ -74,7 +75,9 @@ class ArticleListApiTest extends ArticleTestSupport {
         String username = uniqueUsername();
         RestTestClient author = withToken(register(username));
         String id = publish(author, createDraft(author, draftIn(1, 26)));
-        client.get().uri(API + "/articles/{id}", id).exchange().expectStatus().isOk();
+        client.get().uri(API + "/articles/{id}", id)
+                .exchange()
+                .expectStatus().isOk();
 
         client.get().uri(API + "/articles?tagId=26")
                 .exchange()
@@ -146,7 +149,8 @@ class ArticleListApiTest extends ArticleTestSupport {
             client.get().uri(API + "/articles?" + query)
                     .exchange()
                     .expectStatus().isBadRequest()
-                    .expectBody().jsonPath("$.code").isEqualTo(90400);
+                    .expectBody()
+                    .jsonPath("$.code").isEqualTo(90400);
         }
     }
 }

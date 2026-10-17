@@ -30,21 +30,24 @@ class RateLimitApiTest extends ArticleTestSupport {
     }
 
     private static RestTestClient.ResponseSpec postLogin(RestTestClient client, String username) {
-        return client.post().uri(API + "/auth/login")
+        return client.post()
+                .uri(API + "/auth/login")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("username", username, "password", PASSWORD))
                 .exchange();
     }
 
     private static RestTestClient.ResponseSpec comment(RestTestClient user, String articleId) {
-        return user.post().uri(API + "/articles/{id}/comments", articleId)
+        return user.post()
+                .uri(API + "/articles/{id}/comments", articleId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("content", "写得好"))
                 .exchange();
     }
 
     private static RestTestClient.ResponseSpec reply(RestTestClient user, String commentId) {
-        return user.post().uri(API + "/comments/{id}/replies", commentId)
+        return user.post()
+                .uri(API + "/comments/{id}/replies", commentId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("content", "同意"))
                 .exchange();
@@ -54,7 +57,8 @@ class RateLimitApiTest extends ArticleTestSupport {
         AtomicReference<String> id = new AtomicReference<>();
         user.get().uri(API + "/users/me")
                 .exchange()
-                .expectBody().jsonPath("$.data.id").value(String.class, id::set);
+                .expectBody()
+                .jsonPath("$.data.id").value(String.class, id::set);
         return id.get();
     }
 
@@ -71,11 +75,13 @@ class RateLimitApiTest extends ArticleTestSupport {
             login(username);
         }
 
-        postLogin(client, username)
-                .expectStatus().isEqualTo(429)
-                .expectHeader().value(HttpHeaders.RETRY_AFTER,
-                        value -> assertThat(Long.parseLong(value)).isBetween(1L, 60L))
-                .expectBody().jsonPath("$.code").isEqualTo(90429);
+        postLogin(client, username).expectStatus()
+                .isEqualTo(429)
+                .expectHeader()
+                .value(HttpHeaders.RETRY_AFTER, value -> assertThat(Long.parseLong(value)).isBetween(1L, 60L))
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo(90429);
     }
 
     @Test
@@ -96,7 +102,9 @@ class RateLimitApiTest extends ArticleTestSupport {
         RestTestClient first = withToken(register(uniqueUsername()));
         RestTestClient second = withToken(register(uniqueUsername()));
         follow(first, authorId).expectStatus().isOk();
-        first.delete().uri(API + "/users/{id}/follow", authorId).exchange().expectStatus().isOk();
+        first.delete().uri(API + "/users/{id}/follow", authorId)
+                .exchange()
+                .expectStatus().isOk();
         follow(first, authorId).expectStatus().isEqualTo(429);
 
         follow(second, authorId).expectStatus().isOk();
@@ -109,15 +117,16 @@ class RateLimitApiTest extends ArticleTestSupport {
         RestTestClient reader = withToken(register(uniqueUsername()));
         AtomicReference<String> commentId = new AtomicReference<>();
         comment(reader, article).expectStatus().isOk()
-                .expectBody().jsonPath("$.data.id").value(String.class, commentId::set);
+                .expectBody()
+                .jsonPath("$.data.id").value(String.class, commentId::set);
         comment(reader, article).expectStatus().isOk();
         reply(reader, commentId.get()).expectStatus().isOk();
 
-        reply(reader, commentId.get())
-                .expectStatus().isEqualTo(429)
+        reply(reader, commentId.get()).expectStatus()
+                .isEqualTo(429)
                 // 每分钟的额度还有余量，等待时间由每天的额度决定
-                .expectHeader().value(HttpHeaders.RETRY_AFTER,
-                        value -> assertThat(Long.parseLong(value)).isGreaterThan(60L));
+                .expectHeader()
+                .value(HttpHeaders.RETRY_AFTER, value -> assertThat(Long.parseLong(value)).isGreaterThan(60L));
     }
 
     @Test
@@ -126,11 +135,13 @@ class RateLimitApiTest extends ArticleTestSupport {
             register(uniqueUsername());
         }
 
-        client.post().uri(API + "/auth/register")
+        client.post()
+                .uri(API + "/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("username", uniqueUsername(), "password", PASSWORD))
                 .exchange()
-                .expectStatus().isEqualTo(429);
+                .expectStatus()
+                .isEqualTo(429);
     }
 
     @Test
@@ -158,8 +169,12 @@ class RateLimitApiTest extends ArticleTestSupport {
         RestTestClient author = withToken(register(uniqueUsername()));
         String article = publish(author, createDraft(author, draft()));
         RestTestClient reader = withToken(register(uniqueUsername()));
-        reader.put().uri(API + "/articles/{id}/like", article).exchange().expectStatus().isOk();
-        reader.put().uri(API + "/articles/{id}/favorite", article).exchange().expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/like", article)
+                .exchange()
+                .expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/favorite", article)
+                .exchange()
+                .expectStatus().isOk();
 
         reader.delete().uri(API + "/articles/{id}/favorite", article)
                 .exchange()
@@ -171,6 +186,7 @@ class RateLimitApiTest extends ArticleTestSupport {
     }
 
     private RestTestClient.ResponseSpec search() {
-        return client.get().uri(API + "/search/articles?q=redis").exchange();
+        return client.get().uri(API + "/search/articles?q=redis")
+                .exchange();
     }
 }

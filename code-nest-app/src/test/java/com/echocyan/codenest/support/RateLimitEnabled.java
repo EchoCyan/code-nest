@@ -2,7 +2,12 @@ package com.echocyan.codenest.support;
 
 import org.springframework.test.context.TestPropertySource;
 
-import java.lang.annotation.*;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Inherited;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 /**
  * 让测试类在开启限流的上下文里运行。本机（127.0.0.1）是可信代理，测试用 {@code X-Forwarded-For} 模拟不同的客户端 IP；
@@ -12,17 +17,10 @@ import java.lang.annotation.*;
 @Inherited
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
-@TestPropertySource(properties = {
-        "rate-limit.enabled=true",
-        "rate-limit.trusted-proxies=127.0.0.1",
-        "rate-limit.rules.register-per-hour.limit=3",
-        "rate-limit.rules.login-per-minute.limit=3",
-        "rate-limit.rules.search-per-minute.limit=2",
-        "rate-limit.rules.publish-per-hour.limit=1",
-        "rate-limit.rules.like-favorite-per-minute.limit=2",
-        "rate-limit.rules.follow-per-minute.limit=2",
-        "rate-limit.rules.comment-per-minute.limit=5",
-        "rate-limit.rules.comment-per-day.limit=3",
-})
+@TestPropertySource(properties = {"rate-limit.enabled=true", "rate-limit.trusted-proxies=127.0.0.1",
+        "rate-limit.rules.register-per-hour.limit=3", "rate-limit.rules.login-per-minute.limit=3",
+        "rate-limit.rules.search-per-minute.limit=2", "rate-limit.rules.publish-per-hour.limit=1",
+        "rate-limit.rules.like-favorite-per-minute.limit=2", "rate-limit.rules.follow-per-minute.limit=2",
+        "rate-limit.rules.comment-per-minute.limit=5", "rate-limit.rules.comment-per-day.limit=3",})
 public @interface RateLimitEnabled {
 }

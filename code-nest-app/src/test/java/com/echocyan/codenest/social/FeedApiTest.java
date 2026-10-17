@@ -25,10 +25,16 @@ class FeedApiTest extends ArticleTestSupport {
         RestTestClient reader = withToken(register(uniqueUsername()));
 
         expectFeed(reader, List.of());
-        client.get().uri(API + "/feed").exchange().expectStatus().isUnauthorized();
+        client.get().uri(API + "/feed")
+                .exchange()
+                .expectStatus().isUnauthorized();
 
-        reader.put().uri(API + "/users/{id}/follow", authorId).exchange().expectStatus().isOk();
-        reader.put().uri(API + "/articles/{id}/like", published).exchange().expectStatus().isOk();
+        reader.put().uri(API + "/users/{id}/follow", authorId)
+                .exchange()
+                .expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/like", published)
+                .exchange()
+                .expectStatus().isOk();
         eventually(() -> reader.get().uri(API + "/feed")
                 .exchange()
                 .expectStatus().isOk()
@@ -44,7 +50,9 @@ class FeedApiTest extends ArticleTestSupport {
                 .jsonPath("$.data.list[0].content").doesNotExist()
                 .jsonPath("$.data.hasMore").isEqualTo(false));
 
-        reader.delete().uri(API + "/users/{id}/follow", authorId).exchange().expectStatus().isOk();
+        reader.delete().uri(API + "/users/{id}/follow", authorId)
+                .exchange()
+                .expectStatus().isOk();
         expectFeed(reader, List.of());
     }
 
@@ -112,10 +120,13 @@ class FeedApiTest extends ArticleTestSupport {
             RestTestClient.BodyContentSpec page = reader.get()
                     .uri(API + "/feed?size=" + size + (cursor.get() == null ? "" : "&cursor=" + cursor.get()))
                     .exchange()
-                    .expectStatus().isOk()
+                    .expectStatus()
+                    .isOk()
                     .expectBody()
-                    .jsonPath("$.data.list[*].id").value(List.class, seen::addAll)
-                    .jsonPath("$.data.hasMore").value(Boolean.class, hasMore::set);
+                    .jsonPath("$.data.list[*].id")
+                    .value(List.class, seen::addAll)
+                    .jsonPath("$.data.hasMore")
+                    .value(Boolean.class, hasMore::set);
             if (hasMore.get()) {
                 page.jsonPath("$.data.nextCursor").value(String.class, cursor::set);
             }

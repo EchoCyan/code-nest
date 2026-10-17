@@ -32,9 +32,7 @@ public final class SharedContainers {
         @Override
         public void stop() {
         }
-    }
-            .withDatabaseName("code_nest")
-            .withEnv("TZ", "Asia/Shanghai");
+    }.withDatabaseName("code_nest").withEnv("TZ", "Asia/Shanghai");
 
     @ServiceConnection(name = "redis")
     static final GenericContainer<?> REDIS = new RedisContainer().withExposedPorts(6379);
@@ -43,9 +41,7 @@ public final class SharedContainers {
         @Override
         public void stop() {
         }
-    }
-            .withEnv("xpack.security.enabled", "false")
-            .withEnv("ES_JAVA_OPTS", "-Xms512m -Xmx512m");
+    }.withEnv("xpack.security.enabled", "false").withEnv("ES_JAVA_OPTS", "-Xms512m -Xmx512m");
     private static final String ES_IMAGE = "code-nest/elasticsearch-ik:9.4.5";
 
     private SharedContainers() {
@@ -58,12 +54,10 @@ public final class SharedContainers {
      * 镜像名含 ES 版本，Dockerfile 只随版本变化；若改了 Dockerfile 而镜像名不变，需要先手动删除旧镜像。
      */
     private static DockerImageName elasticsearchImage() {
-        boolean exists = !DockerClientFactory.instance().client()
-                .listImagesCmd().withReferenceFilter(ES_IMAGE).exec().isEmpty();
+        boolean exists =
+                !DockerClientFactory.instance().client().listImagesCmd().withReferenceFilter(ES_IMAGE).exec().isEmpty();
         if (!exists) {
-            new ImageFromDockerfile(ES_IMAGE, false)
-                    .withFileFromPath(".", findRepoPath("docker/elasticsearch"))
-                    .get();
+            new ImageFromDockerfile(ES_IMAGE, false).withFileFromPath(".", findRepoPath("docker/elasticsearch")).get();
         }
         return DockerImageName.parse(ES_IMAGE)
                 .asCompatibleSubstituteFor("docker.elastic.co/elasticsearch/elasticsearch");

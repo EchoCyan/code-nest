@@ -21,35 +21,47 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 榜单存在 ZSet {@code hot:articles} 中，member 为文章 ID，score 为热度。重算时先写入临时 key，
- * 再用 {@code RENAME} 原子替换，读取方看不到写了一半的榜单。已删除的文章在读取时滤掉，下一轮重算时自然不会进入候选集。
+ * 热门文章榜单服务实现类。
  */
 @Slf4j
 @Service
 class HotArticleServiceImpl implements HotArticleService {
 
+    /**
+     * 热榜 Redis 键
+     */
     private static final String KEY = "hot:articles";
 
+    /**
+     * 重算临时键
+     */
     private static final String TMP_KEY = "hot:articles:tmp";
 
+    /**
+     * 定时重算分布式锁键
+     */
     private static final String LOCK_KEY = "hot:lock";
 
     /**
-     * 锁的过期时间，短于重算间隔；实例崩溃时锁最迟在这之后释放，不影响下一轮。
+     * 分布式锁租期
      */
     private static final Duration LOCK_TTL = Duration.ofSeconds(240);
 
     /**
-     * 候选集：最近这段时间内发布的文章。
+     * 候选文章时间窗口（7天）
      */
     private static final Duration CANDIDATE_WINDOW = Duration.ofDays(7);
 
     /**
-     * 一次批量读取计数的文章数。
+     * 计数批量查询的分批批次大小。
      */
     private static final int BATCH = 500;
 
@@ -60,8 +72,11 @@ class HotArticleServiceImpl implements HotArticleService {
     private final RedisLock redisLock;
     private final HotFormula formula;
 
-    HotArticleServiceImpl(ArticleService articleService, ArticleReader articleReader, CounterApi counterApi,
-                          StringRedisTemplate redis, RedisLock redisLock,
+    HotArticleServiceImpl(ArticleService articleService,
+                          ArticleReader articleReader,
+                          CounterApi counterApi,
+                          StringRedisTemplate redis,
+                          RedisLock redisLock,
                           @Value("${hot.weight.like}") double likeWeight,
                           @Value("${hot.weight.favorite}") double favoriteWeight,
                           @Value("${hot.weight.comment}") double commentWeight,
@@ -76,7 +91,7 @@ class HotArticleServiceImpl implements HotArticleService {
     }
 
     /**
-     * 每 5 分钟整点执行一次，各实例同时触发，由锁保证只有一个实例在算。
+     * 定时调度重算任务，每 5 分钟整点触发。
      */
     @Scheduled(cron = "0 */5 * * * *")
     void scheduledRefresh() {
@@ -100,7 +115,7 @@ class HotArticleServiceImpl implements HotArticleService {
     }
 
     /**
-     * 重算榜单并原子替换；没有候选时清空榜单。
+     * 执行全量热度重算并通过 RENAME 原子替换正式缓存键；若候选集为空则清理正式键。
      */
     private void recompute() {
         Set<TypedTuple<String>> top = top(DateTimes.now());
@@ -114,10 +129,13 @@ class HotArticleServiceImpl implements HotArticleService {
     }
 
     /**
-     * 按热度取候选集的前 {@value #CAPACITY} 名。
+     * 从时间窗口候选集中评分并筛选 Top {@value #CAPACITY} 文章。
+     *
+     * @param now 当前时间戳
+     * @return 评分有序元组集合
      */
     private Set<TypedTuple<String>> top(LocalDateTime now) {
-        // 只取算分需要的 ID 与发布时间
+        // 仅投影计算所需的核心列
         List<Article> candidates = articleService.lambdaQuery()
                 .select(Article::getId, Article::getPublishedAt)
                 .eq(Article::getStatus, ArticleStatus.PUBLISHED)
@@ -126,8 +144,8 @@ class HotArticleServiceImpl implements HotArticleService {
         List<TypedTuple<String>> scored = new ArrayList<>(candidates.size());
         for (int from = 0; from < candidates.size(); from += BATCH) {
             List<Article> batch = candidates.subList(from, Math.min(from + BATCH, candidates.size()));
-            Map<Long, Counts> counts = counterApi.get(CounterTarget.ARTICLE,
-                    batch.stream().map(Article::getId).toList());
+            Map<Long, Counts> counts =
+                    counterApi.get(CounterTarget.ARTICLE, batch.stream().map(Article::getId).toList());
             for (Article article : batch) {
                 double hours = Math.max(0, Duration.between(article.getPublishedAt(), now).toMillis() / 3_600_000.0);
                 scored.add(TypedTuple.of(String.valueOf(article.getId()),

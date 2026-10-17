@@ -4,21 +4,28 @@ import com.echocyan.codenest.counter.api.CounterMetric;
 import com.echocyan.codenest.counter.api.Counts;
 
 /**
- * 热度公式（仿 Hacker News）：{@code (点赞·like + 收藏·favorite + 评论·comment + 浏览·view) / (发布小时数 + 2)^gravity}。
- * 分母随时间增长，旧文章的热度持续下降。
+ * 热度评分算法模型。
+ * <p>
+ * 计分公式：{@code score = 互动加权和 / (发布小时数 + 2) ^ gravity}
  *
- * @param gravity 重力系数，越大衰减越快
+ * @param likeWeight     点赞权重
+ * @param favoriteWeight 收藏权重
+ * @param commentWeight  评论权重
+ * @param viewWeight     浏览量权重
+ * @param gravity        时间衰减系数
  */
-record HotFormula(double likeWeight, double favoriteWeight, double commentWeight, double viewWeight,
-                  double gravity) {
+record HotFormula(double likeWeight, double favoriteWeight, double commentWeight, double viewWeight, double gravity) {
 
     /**
-     * @param hoursSincePublished 发布至今的小时数，可带小数
+     * 计算指定文章的综合热度得分。
+     *
+     * @param counts              各维度互动计数汇总
+     * @param hoursSincePublished 文章正式发布至今的小时数（浮点数）
+     * @return 综合计算所得的热度分值
      */
     double score(Counts counts, double hoursSincePublished) {
-        double weighted = likeWeight * counts.get(CounterMetric.ARTICLE_LIKE)
-                + favoriteWeight * counts.get(CounterMetric.ARTICLE_FAVORITE)
-                + commentWeight * counts.get(CounterMetric.ARTICLE_COMMENT)
+        double weighted = likeWeight * counts.get(CounterMetric.ARTICLE_LIKE) + favoriteWeight * counts.get(
+                CounterMetric.ARTICLE_FAVORITE) + commentWeight * counts.get(CounterMetric.ARTICLE_COMMENT)
                 + viewWeight * counts.get(CounterMetric.ARTICLE_VIEW);
         return weighted / Math.pow(hoursSincePublished + 2, gravity);
     }

@@ -11,27 +11,39 @@ import com.echocyan.codenest.article.entity.Article;
 import com.echocyan.codenest.article.entity.ArticleContent;
 import com.echocyan.codenest.article.entity.Tag;
 import com.echocyan.codenest.article.mapper.ArticleMapper;
-import com.echocyan.codenest.article.service.*;
+import com.echocyan.codenest.article.service.ArticleCache;
+import com.echocyan.codenest.article.service.ArticleContentService;
+import com.echocyan.codenest.article.service.ArticleService;
+import com.echocyan.codenest.article.service.ArticleTagService;
+import com.echocyan.codenest.article.service.CategoryService;
+import com.echocyan.codenest.article.service.TagService;
 import com.echocyan.codenest.common.exception.BizException;
 import com.echocyan.codenest.common.exception.CommonErrorCode;
 import com.echocyan.codenest.common.util.DateTimes;
 import com.echocyan.codenest.common.util.Texts;
-import com.echocyan.codenest.counter.api.*;
+import com.echocyan.codenest.counter.api.CounterApi;
+import com.echocyan.codenest.counter.api.CounterMetric;
+import com.echocyan.codenest.counter.api.CounterSource;
+import com.echocyan.codenest.counter.api.IdCount;
 import com.echocyan.codenest.framework.mq.DomainEventPublisher;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 
+/**
+ * 文章写服务实现类。
+ */
 @Service
 @RequiredArgsConstructor
-public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> implements ArticleService,
-        CounterSource {
+public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> implements ArticleService, CounterSource {
 
     /**
-     * 自动摘要截取的正文字符数。
+     * 自动截取正文起始文本作为摘要的最大字符数。
      */
     private static final int AUTO_SUMMARY_LENGTH = 100;
 
@@ -44,7 +56,7 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
     private final ArticleCache articleCache;
 
     /**
-     * 请求中可由作者修改的字段。
+     * 根据请求构建可由作者编辑的文章主表实体。
      */
     private static Article articleOf(ArticleRequest request) {
         Article article = new Article();
@@ -55,6 +67,9 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
         return article;
     }
 
+    /**
+     * 构建正文扩展表实体。
+     */
     private static ArticleContent contentOf(long articleId, ArticleRequest request) {
         ArticleContent content = new ArticleContent();
         content.setArticleId(articleId);
@@ -63,7 +78,7 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
     }
 
     /**
-     * 作者填写的摘要；没填时截取正文开头。
+     * 提取文章摘要；未显式指定时自动截取正文起始纯文本。
      */
     private static String summaryOf(ArticleRequest request) {
         if (request.summary() != null && !request.summary().isBlank()) {
@@ -135,10 +150,7 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
         // 乐观锁插件比对版本号并把它 +1，搜索同步以此让删除覆盖此前的写入
         Article deletion = new Article();
         deletion.setVersion(article.getVersion());
-        boolean deleted = lambdaUpdate()
-                .set(Article::getDeleted, 1)
-                .eq(Article::getId, id)
-                .update(deletion);
+        boolean deleted = lambdaUpdate().set(Article::getDeleted, 1).eq(Article::getId, id).update(deletion);
         if (!deleted) {
             throw new BizException(ArticleErrorCode.VERSION_CONFLICT);
         }
@@ -175,9 +187,13 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
     }
 
     /**
-     * 查询当前用户自己的文章，用于写操作前的归属检查。
+     * 校验当前操作人是否为目标文章的作者。
      *
-     * @throws BizException {@link ArticleErrorCode#ARTICLE_NOT_FOUND}、{@link CommonErrorCode#FORBIDDEN}
+     * @param id     文章 ID
+     * @param userId 操作人用户 ID
+     * @return 归属校验通过的文章实体
+     * @throws BizException 若文章不存在抛出 {@link ArticleErrorCode#ARTICLE_NOT_FOUND}；
+     *                      若非作者本人操作抛出 {@link CommonErrorCode#FORBIDDEN}
      */
     private Article getOwned(long id, long userId) {
         Article article = getById(id);
@@ -191,9 +207,10 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
     }
 
     /**
-     * 按 ID 更新并比对版本号，成功后 article 中的版本号已是新值。
+     * 执行带乐观锁版本校验的更新；更新失败抛出版本冲突异常。
      *
-     * @throws BizException {@link ArticleErrorCode#VERSION_CONFLICT}
+     * @param article 待更新的文章实体
+     * @throws BizException 若版本号不一致导致更新影响行数为 0 抛出 {@link ArticleErrorCode#VERSION_CONFLICT}
      */
     private void updateOrConflict(Article article) {
         if (!updateById(article)) {
@@ -202,7 +219,12 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
     }
 
     /**
-     * @throws BizException {@link ArticleErrorCode#CATEGORY_NOT_FOUND}、{@link ArticleErrorCode#TAG_NOT_FOUND}
+     * 校验指定分类及标签集合的合法性。
+     *
+     * @param categoryId 分类 ID
+     * @param tagIds     标签 ID 列表
+     * @throws BizException 若分类不存在抛出 {@link ArticleErrorCode#CATEGORY_NOT_FOUND}；
+     *                      若存在无效标签抛出 {@link ArticleErrorCode#TAG_NOT_FOUND}
      */
     private void checkCategoryAndTags(long categoryId, List<Long> tagIds) {
         if (categoryService.getById(categoryId) == null) {
@@ -212,5 +234,4 @@ public class ArticleServiceImpl extends ServiceImpl<ArticleMapper, Article> impl
             throw new BizException(ArticleErrorCode.TAG_NOT_FOUND);
         }
     }
-
 }

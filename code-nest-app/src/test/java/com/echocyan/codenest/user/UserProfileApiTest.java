@@ -18,15 +18,14 @@ class UserProfileApiTest extends IntegrationTest {
         String username = uniqueUsername();
         RestTestClient me = withToken(register(username));
 
-        me.put().uri(API + "/users/me")
+        me.put()
+                .uri(API + "/users/me")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of(
-                        "username", "someone_else",
-                        "nickname", "码农小王",
-                        "avatarUrl", "https://example.com/a.png",
-                        "bio", "写 Java 的"))
+                .body(Map.of("username", "someone_else", "nickname", "码农小王", "avatarUrl",
+                        "https://example.com/a.png", "bio", "写 Java 的"))
                 .exchange()
-                .expectStatus().isOk();
+                .expectStatus()
+                .isOk();
 
         me.get().uri(API + "/users/me")
                 .exchange()
@@ -41,25 +40,26 @@ class UserProfileApiTest extends IntegrationTest {
     @Test
     void omittedAvatarAndBioAreCleared() {
         RestTestClient me = withToken(register(uniqueUsername()));
-        me.put().uri(API + "/users/me")
+        me.put()
+                .uri(API + "/users/me")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("nickname", "n1", "avatarUrl", "https://example.com/a.png", "bio", "b"))
                 .exchange()
-                .expectStatus().isOk();
+                .expectStatus()
+                .isOk();
 
-        me.put().uri(API + "/users/me")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("nickname", "n2"))
+        me.put().uri(API + "/users/me").contentType(MediaType.APPLICATION_JSON).body(Map.of("nickname", "n2"))
                 .exchange()
                 .expectStatus().isOk();
 
-        me.get().uri(API + "/users/me")
+        me.get()
+                .uri(API + "/users/me")
                 .exchange()
                 .expectBody()
-                .jsonPath("$.data.nickname").isEqualTo("n2")
-                .jsonPath("$.data").value(Map.class, data -> assertThat(data)
-                        .containsEntry("avatarUrl", null)
-                        .containsEntry("bio", null));
+                .jsonPath("$.data.nickname")
+                .isEqualTo("n2")
+                .jsonPath("$.data")
+                .value(Map.class, data -> assertThat(data).containsEntry("avatarUrl", null).containsEntry("bio", null));
     }
 
     @Test
@@ -72,12 +72,11 @@ class UserProfileApiTest extends IntegrationTest {
         Map<String, Object> scriptAvatar = new HashMap<>(Map.of("nickname", "ok", "avatarUrl", "javascript:alert(1)"));
 
         for (Map<String, Object> body : List.of(blankNickname, longNickname, longBio, scriptAvatar)) {
-            me.put().uri(API + "/users/me")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(body)
+            me.put().uri(API + "/users/me").contentType(MediaType.APPLICATION_JSON).body(body)
                     .exchange()
                     .expectStatus().isBadRequest()
-                    .expectBody().jsonPath("$.code").isEqualTo(90400);
+                    .expectBody()
+                    .jsonPath("$.code").isEqualTo(90400);
         }
     }
 
@@ -100,6 +99,7 @@ class UserProfileApiTest extends IntegrationTest {
         client.get().uri(API + "/users/{id}", "1")
                 .exchange()
                 .expectStatus().isNotFound()
-                .expectBody().jsonPath("$.code").isEqualTo(10003);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(10003);
     }
 }

@@ -14,6 +14,11 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * 用户模块对外门面服务实现。
+ * <p>
+ * 基于两级缓存提供用户简要信息的批量读取，未命中时回源数据库并转换为 {@link UserBrief}。
+ */
 @Service
 @RequiredArgsConstructor
 class UserApiImpl implements UserApi {
@@ -24,7 +29,8 @@ class UserApiImpl implements UserApi {
 
     @Override
     public Map<Long, UserBrief> getBriefs(Collection<Long> userIds) {
-        return briefCache.getAll(userIds, ids -> userService.listByIds(ids).stream()
+        return briefCache.getAll(userIds, ids -> userService.listByIds(ids)
+                .stream()
                 .map(userConverter::toBrief)
                 .collect(Collectors.toMap(UserBrief::id, Function.identity())));
     }

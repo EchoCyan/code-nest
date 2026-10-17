@@ -1,6 +1,12 @@
 package com.echocyan.codenest.framework.mq;
 
-import org.springframework.amqp.core.*;
+import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.Declarable;
+import org.springframework.amqp.core.Declarables;
+import org.springframework.amqp.core.DirectExchange;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
+import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.annotation.RabbitHandler;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.core.annotation.AnnotatedElementUtils;
@@ -25,8 +31,14 @@ import java.util.stream.Stream;
  */
 public final class EventQueues {
 
+    /**
+     * 全局领域事件发布所使用的唯一统一 Topic 交换机名称。
+     */
     public static final String EXCHANGE = "codenest.events";
 
+    /**
+     * 全局死信消息隔离所使用的 Direct 交换机名称（Dead Letter Exchange）。
+     */
     public static final String DEAD_LETTER_EXCHANGE = "codenest.dlx";
 
     private EventQueues() {
@@ -70,7 +82,8 @@ public final class EventQueues {
      */
     public static Declarables declareEvents(String queue, Class<?>... eventTypes) {
         String deadLetterQueue = queue + ".dlq";
-        Queue main = QueueBuilder.durable(queue).classic()
+        Queue main = QueueBuilder.durable(queue)
+                .classic()
                 .deadLetterExchange(DEAD_LETTER_EXCHANGE)
                 .deadLetterRoutingKey(deadLetterQueue)
                 .build();
@@ -79,8 +92,7 @@ public final class EventQueues {
                 new Binding(deadLetterQueue, Binding.DestinationType.QUEUE, DEAD_LETTER_EXCHANGE, deadLetterQueue,
                         null)));
         for (Class<?> eventType : eventTypes) {
-            declarables.add(new Binding(queue, Binding.DestinationType.QUEUE, EXCHANGE, routingKeyOf(eventType),
-                    null));
+            declarables.add(new Binding(queue, Binding.DestinationType.QUEUE, EXCHANGE, routingKeyOf(eventType), null));
         }
         return new Declarables(declarables);
     }
@@ -106,9 +118,8 @@ public final class EventQueues {
             throw new IllegalStateException(listener.getName() + " does not listen to " + queue);
         }
         List<Class<?>> eventTypes = Stream.of(ReflectionUtils.getUniqueDeclaredMethods(listener))
-                .filter(method -> classListener != null
-                        ? AnnotatedElementUtils.hasAnnotation(method, RabbitHandler.class)
-                        : listensTo(method, queue))
+                .filter(method -> classListener != null ? AnnotatedElementUtils.hasAnnotation(method,
+                        RabbitHandler.class) : listensTo(method, queue))
                 .<Class<?>>map(EventQueues::eventTypeOf)
                 .distinct()
                 .toList();
@@ -131,10 +142,20 @@ public final class EventQueues {
                         method.toGenericString() + " has no parameter annotated with @DomainEvent"));
     }
 
+    /**
+     * 构建全局持久化 Topic 领域事件交换机对象。
+     *
+     * @return 持久化、非自动删除的主事件交换机 {@link TopicExchange}
+     */
     static TopicExchange exchange() {
         return new TopicExchange(EXCHANGE, true, false);
     }
 
+    /**
+     * 构建全局持久化 Direct 死信交换机对象。
+     *
+     * @return 持久化、非自动删除的死信交换机 {@link DirectExchange}
+     */
     static DirectExchange deadLetterExchange() {
         return new DirectExchange(DEAD_LETTER_EXCHANGE, true, false);
     }

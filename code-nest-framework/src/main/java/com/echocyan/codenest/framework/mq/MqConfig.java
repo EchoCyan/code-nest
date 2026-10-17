@@ -23,29 +23,40 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 消息可靠性底座的公共配置。本地重试次数与间隔在 {@code spring.rabbitmq.listener.simple.retry} 中配置，
- * 重试耗尽后由这里的 {@link MessageRecoverer} 打告警日志并拒绝消息，broker 把它转入死信队列。
- * <p>
- * 启动时校验可靠投递依赖的 RabbitMQ 配置，缺一项就启动失败，见 {@link #requireReliabilitySettings}。
+ * RabbitMQ 消息可靠性基础设施配置。
+ *
+ * <p>配置交换机、JSON 转换器、死信处理与监听器容器工厂，
+ * 并在启动时校验 Publisher Confirm/Returns 等可靠性前置配置。</p>
  */
 @Slf4j
 @EnableScheduling
 @Configuration(proxyBeanMethods = false)
 public class MqConfig {
 
+    /**
+     * 构造配置类并立即执行 RabbitMQ 可靠性环境强校验。
+     *
+     * @param rabbitProperties Spring Boot 绑定的 RabbitMQ 配置属性对象
+     */
     MqConfig(RabbitProperties rabbitProperties) {
         requireReliabilitySettings(rabbitProperties);
     }
 
     /**
-     * 可靠投递依赖的配置：
-     * <ul>
-     *     <li>{@code publisher-confirm-type: correlated}：没有它，发送永远等不到 confirm，消息全部留给补发任务直到失败；</li>
-     *     <li>{@code publisher-returns: true} 与 {@code template.mandatory: true}：没有它们，不可路由的消息会被当作发送成功；</li>
-     *     <li>{@code listener.simple.retry.enabled: true}：没有它，消费失败不会本地重试，也不会转入死信队列。</li>
-     * </ul>
+     * 校验 RabbitMQ 客户端配置是否满足可靠消息投递的强制性技术前置要求。
      *
-     * @throws IllegalStateException 缺少其中任一项，消息里列出缺少的配置
+     * <p>必须同时满足如下四项配置：
+     * <ol>
+     *   <li>{@code spring.rabbitmq.publisher-confirm-type=correlated}：开启关联发布确认。若缺失，发送端将永远无法收到 Broker ACK，导致 Outbox
+     *   全部堆积并最终标记为 FAILED；</li>
+     *   <li>{@code spring.rabbitmq.publisher-returns=true}：开启投递失败退回；</li>
+     *   <li>{@code spring.rabbitmq.template.mandatory=true}：开启 Mandatory 强制路由标识。与 returns 配合，确保当消息路由键无任何绑定队列时由
+     *   Broker 显式退回，防止静默丢弃；</li>
+     *   <li>{@code spring.rabbitmq.listener.simple.retry.enabled=true}：开启消费端本地自动重试。若缺失，单次消费异常将直接丢弃或死循环重入队。</li>
+     * </ol>
+     *
+     * @param properties 待检验的 RabbitMQ 配置属性
+     * @throws IllegalStateException 若上述四项关键配置中有任意一项未满足规范
      */
     static void requireReliabilitySettings(RabbitProperties properties) {
         List<String> missing = new ArrayList<>();
@@ -66,18 +77,34 @@ public class MqConfig {
         }
     }
 
+    /**
+     * 注册全局持久化 Topic 领域事件交换机 Bean。
+     *
+     * @return 统一领域事件交换机 {@link TopicExchange}
+     */
     @Bean
     public TopicExchange eventExchange() {
         return EventQueues.exchange();
     }
 
+    /**
+     * 注册全局持久化 Direct 死信交换机 Bean。
+     *
+     * @return 统一死信交换机 {@link DirectExchange}
+     */
     @Bean
     public DirectExchange deadLetterExchange() {
         return EventQueues.deadLetterExchange();
     }
 
     /**
-     * 监听器方法的参数按消息的 {@code type} 属性从 JSON 反序列化，与 Web 层共用同一套 Jackson 约定。
+     * 注册面向领域事件的 JSON 报文消息转换器 Bean。
+     *
+     * <p>与 Web 表现层共享统一的 Jackson 配置（雪花 ID 字符串化、时区规整），
+     * 并绑定 {@link DomainEventClassMapper} 进行类型白名单安全反序列化。
+     *
+     * @param jsonMapper 全局定制配置的 Jackson 映射器
+     * @return 领域事件专用 {@link MessageConverter}
      */
     @Bean
     public MessageConverter eventMessageConverter(JsonMapper jsonMapper) {
@@ -86,6 +113,15 @@ public class MqConfig {
         return converter;
     }
 
+    /**
+     * 注册重试耗尽后的死信隔离恢复器 Bean。
+     *
+     * <p>当消费端本地重试次数耗尽后，记录 ERROR 级别错误日志，
+     * 抛出 {@link AmqpRejectAndDontRequeueException} 拒绝消息且不重新放回原队列，
+     * 促使 RabbitMQ Broker 依据主队列的死信配置（x-dead-letter-*）自动将消息路由至专属死信队列。
+     *
+     * @return 死信消息恢复处理器 {@link MessageRecoverer}
+     */
     @Bean
     public MessageRecoverer deadLetterRecoverer() {
         return (message, cause) -> {
@@ -97,12 +133,20 @@ public class MqConfig {
     }
 
     /**
-     * 在 Boot 按配置生成的 advice 链（含本地重试）外层，加上绑定当前消息的 advice，
-     * 供 {@link IdempotentConsumer} 取 messageId 与消费队列名。
+     * 注册定制化的 RabbitMQ 监听器容器工厂 Bean。
+     *
+     * <p>在由 Spring Boot 自动装配好的标准 Advice 拦截链（包含本地重试拦截器）最外层，
+     * 前置插入 {@link IdempotentConsumerAspect#bindConsumingMessage()} 拦截器，
+     * 确保进入监听器或触发重试时当前线程均能安全获取底层原始消息上下文。
+     *
+     * @param configurer        Spring Boot 自动装配配置器
+     * @param connectionFactory RabbitMQ 物理连接工厂
+     * @return 组装完成的容器工厂实例
      */
     @Bean
     public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
-            SimpleRabbitListenerContainerFactoryConfigurer configurer, ConnectionFactory connectionFactory) {
+            SimpleRabbitListenerContainerFactoryConfigurer configurer,
+            ConnectionFactory connectionFactory) {
         SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
         configurer.configure(factory, connectionFactory);
         List<Advice> adviceChain = new ArrayList<>();

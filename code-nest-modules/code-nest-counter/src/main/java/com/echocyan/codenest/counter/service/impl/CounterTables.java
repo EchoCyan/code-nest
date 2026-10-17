@@ -8,13 +8,24 @@ import com.echocyan.codenest.counter.mapper.CounterMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
- * 三张计数表的读写。
+ * 计数表持久化映射组件。
  *
- * <p>表名、列名按命名约定从枚举推导：{@code ARTICLE} → {@code article_stat.article_id}，
- * {@code ARTICLE_LIKE} → 字段 {@code like}、列 {@code like_count}。
+ * <p>封装文章、用户、评论统计表的元数据命名规范与读写操作：
+ * <ul>
+ *   <li>表名：{@code {target}_stat}，如 {@code article_stat}。</li>
+ *   <li>主键列：{@code {target}_id}，如 {@code article_id}。</li>
+ *   <li>计数字段/列名：指标去除实体前缀后加 {@code _count}，如 {@code ARTICLE_LIKE} 对应 {@code like_count}。</li>
+ * </ul>
  */
 @Component
 @RequiredArgsConstructor
@@ -23,19 +34,31 @@ class CounterTables {
     private final CounterMapper counterMapper;
 
     /**
-     * @return 属于该对象类型的全部指标，按枚举声明顺序
+     * 获取指定目标类型包含的所有计数指标。
+     *
+     * @param target 目标实体类型
+     * @return 属于该类型的全部指标列表
      */
     static List<CounterMetric> metrics(CounterTarget target) {
         return Arrays.stream(CounterMetric.values()).filter(metric -> metric.target() == target).toList();
     }
 
     /**
-     * 去掉对象类型前缀后的指标名，例如 {@code USER_LIKE_RECEIVED} → {@code like_received}。
+     * 获取指标在 Redis Hash 中的字段名（去除目标类型前缀并小写）。
+     *
+     * @param metric 计数指标
+     * @return Redis 字段名，如 {@code USER_LIKE_RECEIVED} 对应 {@code like_received}
      */
     static String field(CounterMetric metric) {
         return lower(metric.name().substring(metric.target().name().length() + 1));
     }
 
+    /**
+     * 将名称转为小写。
+     *
+     * @param name 原始字符串
+     * @return 小写字符串
+     */
     static String lower(String name) {
         return name.toLowerCase(Locale.ROOT);
     }
@@ -52,13 +75,24 @@ class CounterTables {
         return field(metric) + "_count";
     }
 
+    /**
+     * 重置数据库中指定对象的单项计数。
+     *
+     * @param metric   计数指标
+     * @param targetId 目标对象 ID
+     * @param value    重置计数值
+     */
     void reset(CounterMetric metric, long targetId, long value) {
         CounterTarget target = metric.target();
         counterMapper.reset(table(target), idColumn(target), column(metric), targetId, value, DateTimes.now());
     }
 
     /**
-     * @return 只包含有计数行的对象
+     * 批量查询对象的持久化计数。
+     *
+     * @param target    目标实体类型
+     * @param targetIds 对象 ID 集合
+     * @return 对象 ID 到计数的映射，仅包含数据库中存在计数行的对象
      */
     Map<Long, Counts> select(CounterTarget target, Collection<Long> targetIds) {
         Map<Long, Counts> result = new HashMap<>();
@@ -74,7 +108,12 @@ class CounterTables {
     }
 
     /**
-     * @return ID 在 (afterId, upperId] 内、MySQL 里该项计数不为 0 的对象
+     * 查询在指定主键区间 {@code (afterId, upperId]} 内该指标计数值大于 0 的对象 ID 列表。
+     *
+     * @param metric  计数指标
+     * @param afterId 起始 ID（不含）
+     * @param upperId 截止 ID（含）
+     * @return 计数大于 0 的对象 ID 列表
      */
     List<Long> selectNonZeroIds(CounterMetric metric, long afterId, long upperId) {
         CounterTarget target = metric.target();
@@ -82,7 +121,10 @@ class CounterTables {
     }
 
     /**
-     * 把各对象的全部计数按绝对值写入，没有计数行时插入。
+     * 批量覆写对象的各项计数为绝对值；不存在对应行时插入。
+     *
+     * @param target 目标实体类型
+     * @param counts 对象 ID 到其各项计数的映射
      */
     void upsert(CounterTarget target, Map<Long, Counts> counts) {
         if (counts.isEmpty()) {

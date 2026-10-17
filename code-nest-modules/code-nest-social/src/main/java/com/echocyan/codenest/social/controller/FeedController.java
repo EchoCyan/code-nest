@@ -15,6 +15,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 关注 Feed 动态流控制器。
+ * <p>
+ * 提供当前登录用户的关注作者文章 Feed 游标分页流查询接口。
+ */
 @Tag(name = "Feed")
 @RestController
 @RequestMapping("/feed")
@@ -23,6 +28,13 @@ public class FeedController {
 
     private final FeedStore feedStore;
 
+    /**
+     * 游标分页查询当前用户的关注 Feed 动态流。
+     *
+     * @param cursor 上一页返回的下一页游标（首次查询为 {@code null}）
+     * @param size   分页大小（默认 20，最小 1，最大 50）
+     * @return 包含已发布文章简要卡片及下一页游标的统一响应体
+     */
     @Operation(summary = "关注 Feed", description = "我关注的作者已发布的文章，按文章 ID 倒序；cursor 为上一页返回的 nextCursor")
     @GetMapping
     public Result<CursorResult<ArticleItem>> feed(@RequestParam(required = false) Long cursor,

@@ -13,24 +13,40 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 消费计数变更事件。去重在 Redis 里与累加一起原子执行，不用基于 MySQL 的
- * {@code @IdempotentConsumer}。
+ * 计数变更事件消费者。
+ *
+ * <p>监听并消费 {@link CounterChangedEvent}，通过 Redis Lua 脚本实现更新与去重的原子操作，
+ * 避免依赖关系型数据库防重表带来的额外锁开销。
  */
 @Component
 @RequiredArgsConstructor
 class CounterChangedListener {
 
+    /**
+     * 计数更新队列名称。
+     */
     static final String QUEUE = "counter.update";
 
     private final RedisCounterStore redisCounterStore;
 
+    /**
+     * 声明计数更新专用的 RabbitMQ 队列、交换机及路由绑定。
+     *
+     * @return AMQP 声明对象集合
+     */
     @Bean
     static Declarables counterUpdateQueue() {
         return EventQueues.declare(QUEUE, CounterChangedListener.class);
     }
 
     /**
-     * 各项变更按 messageId 加序号分别去重：中途失败重试时，已生效的变更不会重复累加。
+     * 消费计数变更事件。
+     *
+     * <p>按 {@code messageId:index} 为事件内每项变更生成细粒度去重 Key，
+     * 确保因中途异常重试时，已执行成功的变更项不会被重复累加。
+     *
+     * @param event     计数变更领域事件
+     * @param messageId AMQP 消息全局唯一标识
      */
     @RabbitListener(queues = QUEUE)
     public void consume(CounterChangedEvent event, @Header(AmqpHeaders.MESSAGE_ID) String messageId) {

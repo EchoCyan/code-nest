@@ -31,18 +31,19 @@ class AuthApiTest extends IntegrationTest {
         client.get().uri(API + "/users/me")
                 .exchange()
                 .expectStatus().isUnauthorized()
-                .expectBody().jsonPath("$.code").isEqualTo(90401);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90401);
     }
 
     @Test
     void tokenWithoutBearerPrefixIsRejected() {
         String token = register(uniqueUsername());
 
-        client.get().uri(API + "/users/me")
-                .header(HttpHeaders.AUTHORIZATION, token)
+        client.get().uri(API + "/users/me").header(HttpHeaders.AUTHORIZATION, token)
                 .exchange()
                 .expectStatus().isUnauthorized()
-                .expectBody().jsonPath("$.code").isEqualTo(90401);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90401);
     }
 
     @Test
@@ -51,12 +52,16 @@ class AuthApiTest extends IntegrationTest {
         register(username);
 
         for (String name : new String[]{username, uniqueUsername()}) {
-            client.post().uri(API + "/auth/login")
+            client.post()
+                    .uri(API + "/auth/login")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(Map.of("username", name, "password", "wrong-password"))
                     .exchange()
-                    .expectStatus().isUnauthorized()
-                    .expectBody().jsonPath("$.code").isEqualTo(10002);
+                    .expectStatus()
+                    .isUnauthorized()
+                    .expectBody()
+                    .jsonPath("$.code")
+                    .isEqualTo(10002);
         }
     }
 
@@ -76,7 +81,8 @@ class AuthApiTest extends IntegrationTest {
         withToken(laptop).get().uri(API + "/users/me")
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.username").isEqualTo(username);
+                .expectBody()
+                .jsonPath("$.data.username").isEqualTo(username);
     }
 
     @Test
@@ -84,7 +90,8 @@ class AuthApiTest extends IntegrationTest {
         client.post().uri(API + "/auth/logout")
                 .exchange()
                 .expectStatus().isUnauthorized()
-                .expectBody().jsonPath("$.code").isEqualTo(90401);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90401);
     }
 
     @Test
@@ -92,30 +99,36 @@ class AuthApiTest extends IntegrationTest {
         String username = uniqueUsername();
         register(username);
 
-        client.post().uri(API + "/auth/register")
+        client.post()
+                .uri(API + "/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("username", username, "password", PASSWORD))
                 .exchange()
-                .expectStatus().isEqualTo(409)
-                .expectBody().jsonPath("$.code").isEqualTo(10001);
+                .expectStatus()
+                .isEqualTo(409)
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo(10001);
     }
 
     @ParameterizedTest
-    @CsvSource({
-            "abc, Passw0rd!",                   // 用户名少于 4 位
+    @CsvSource({"abc, Passw0rd!",                   // 用户名少于 4 位
             "abcdefghijklmnopqrstu, Passw0rd!", // 用户名多于 20 位
             "has space, Passw0rd!",             // 用户名含非法字符
-            "中文用户名, Passw0rd!",
-            "valid_name, 1234567",              // 密码少于 8 位
+            "中文用户名, Passw0rd!", "valid_name, 1234567",              // 密码少于 8 位
             "valid_name, 123456789012345678901234567890123", // 密码多于 32 位
             "valid_name, 一二三四五六七八九十一二三四五六七八九十一二三四五", // 25 个汉字：不超过 32 位但超过 BCrypt 的 72 字节
     })
     void registrationRejectsInvalidUsernameOrPassword(String username, String password) {
-        client.post().uri(API + "/auth/register")
+        client.post()
+                .uri(API + "/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("username", username, "password", password))
                 .exchange()
-                .expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.code").isEqualTo(90400);
+                .expectStatus()
+                .isBadRequest()
+                .expectBody()
+                .jsonPath("$.code")
+                .isEqualTo(90400);
     }
 }

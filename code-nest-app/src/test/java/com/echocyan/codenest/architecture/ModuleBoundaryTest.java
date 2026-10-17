@@ -24,25 +24,21 @@ class ModuleBoundaryTest {
 
     static final String ROOT = "com.echocyan.codenest";
     @ArchTest
-    static final ArchRule onlyApiPackagesAcrossModules = crossModuleDependencies(
-            "only depend on other business modules through their api package",
-            (own, target, targetPackage) -> isSameOrSubPackage(targetPackage, ROOT + "." + target + ".api"));
+    static final ArchRule onlyApiPackagesAcrossModules =
+            crossModuleDependencies("only depend on other business modules through their api package",
+                    (own, target, targetPackage) -> isSameOrSubPackage(targetPackage, ROOT + "." + target + ".api"));
     @ArchTest
-    static final ArchRule onlyDeclaredModuleDependencies = crossModuleDependencies(
-            "only depend on business modules declared in the module dependency list",
-            // 限定名引用不受前向引用限制，格式化调整字段顺序后仍能编译
-            (own, target, targetPackage) -> ModuleBoundaryTest.ALLOWED_DEPENDENCIES.get(own).contains(target));
+    static final ArchRule onlyDeclaredModuleDependencies =
+            crossModuleDependencies("only depend on business modules declared in the module dependency list",
+                    // 限定名引用不受前向引用限制，格式化调整字段顺序后仍能编译
+                    (own, target, targetPackage) -> ModuleBoundaryTest.ALLOWED_DEPENDENCIES.get(own).contains(target));
     /**
      * 规格中约定的模块依赖：key 可以依赖 value 中的模块。
      */
-    private static final Map<String, Set<String>> ALLOWED_DEPENDENCIES = Map.of(
-            "user", Set.of("counter"),
-            "counter", Set.of(),
-            "article", Set.of("user", "counter"),
-            "interaction", Set.of("article", "counter"),
-            "social", Set.of("user", "article", "counter"),
-            "notification", Set.of("user", "article", "interaction", "social"),
-            "search", Set.of("article"));
+    private static final Map<String, Set<String>> ALLOWED_DEPENDENCIES =
+            Map.of("user", Set.of("counter"), "counter", Set.of(), "article", Set.of("user", "counter"), "interaction",
+                    Set.of("article", "counter"), "social", Set.of("user", "article", "counter"), "notification",
+                    Set.of("user", "article", "interaction", "social"), "search", Set.of("article"));
 
     /**
      * 检查业务模块之间的每一条依赖，不满足 allowed 的记为违规。
@@ -67,7 +63,8 @@ class ModuleBoundaryTest {
     }
 
     private static String moduleOf(String packageName) {
-        return ALLOWED_DEPENDENCIES.keySet().stream()
+        return ALLOWED_DEPENDENCIES.keySet()
+                .stream()
                 .filter(module -> isSameOrSubPackage(packageName, ROOT + "." + module))
                 .findFirst()
                 .orElse(null);

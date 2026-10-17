@@ -12,27 +12,23 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * {@link FeedStore} 按粉丝数识别大 V：粉丝数不低于阈值的作者。
- *
- * <p>粉丝数存在 ZSet {@code feed:followers}（{@code feed} 是 key 前缀）（member 是作者 ID，score 是粉丝数，没有粉丝的作者不在其中），
- * 关注、取关后由修正消费者按关注表重新统计写入。另有 String {@code feed:followers:ready}：全部重建完成的标记，
- * 启动时不存在就按全部关注关系重建；重建中途失败时标记不会写入，下次启动重来。
- * 读 Feed 时一条 {@code ZRANGEBYSCORE} 取出全部大 V，不必逐个查读者关注的几百个作者的粉丝数。
- * 存的是粉丝数而不是大 V 名单，与阈值无关，阈值不同的实例可以共用。
- *
- * <p>并发修正同一个作者时，后写入的可能是先统计出的旧值；只在粉丝数恰好跨过阈值时影响判定，
- * 到这个作者下次被关注或取关时纠正。
+ * Feed 动态流大 V 识别组件。
+ * <p>
+ * 粉丝数不低于阈值（{@link #threshold}）的作者被视作大 V。
+ * 粉丝数维护在 Redis ZSet {@code {prefix}:followers}（member 为作者 ID，score 为其实时粉丝数）。
+ * 读取 Feed 时仅需一次 {@code ZRANGEBYSCORE} 取出全部大 V，与用户关注列表求交集，无需逐个查询关注作者的粉丝数。
+ * 键 {@code {prefix}:followers:ready} 标识全量初始化状态，缺失时在系统启动后按关注表批量重建。
  */
 @Slf4j
 class BigAuthors {
 
     /**
-     * 重建时每批统计的作者数。
+     * 全量重建时每批统计的作者数。
      */
     private static final int REBUILD_BATCH = 1000;
 
     /**
-     * KEYS：粉丝数 ZSet；ARGV：作者 ID、粉丝数。写入粉丝数（为 0 时移除），返回原来的粉丝数，没有时为 0。
+     * Lua 脚本：原子更新作者粉丝数（若为 0 则从 ZSet 移除），并返回更新前的旧粉丝数（不存在时返回 0）。
      */
     private static final RedisScript<Long> REPLACE = RedisScript.of("""
             local old = redis.call('ZSCORE', KEYS[1], ARGV[1])
@@ -50,6 +46,14 @@ class BigAuthors {
     private final String readyKey;
     private final long threshold;
 
+    /**
+     * 构造大 V 识别器。
+     *
+     * @param redis         Redis 操作模板
+     * @param followerGraph 关注关系图谱数据访问接口
+     * @param keyPrefix     Feed 缓存键通用前缀
+     * @param threshold     判定为大 V 的粉丝数阈值
+     */
     BigAuthors(StringRedisTemplate redis, FollowerGraph followerGraph, String keyPrefix, long threshold) {
         this.redis = redis;
         this.followerGraph = followerGraph;
@@ -59,24 +63,32 @@ class BigAuthors {
     }
 
     /**
-     * @return 给定作者中的大 V
+     * 从给定的作者列表中筛选出当前属于大 V 的作者 ID 集合。
+     *
+     * @param authorIds 待判定的作者 ID 集合
+     * @return 命中大 V 阈值的作者 ID 集合
      */
     Set<Long> among(Collection<Long> authorIds) {
         Set<String> big = redis.opsForZSet().rangeByScore(key, threshold, Double.POSITIVE_INFINITY);
-        return authorIds.stream()
-                .filter(id -> big.contains(String.valueOf(id)))
-                .collect(Collectors.toSet());
+        return authorIds.stream().filter(id -> big.contains(String.valueOf(id))).collect(Collectors.toSet());
     }
 
+    /**
+     * 判断指定作者是否为大 V。
+     *
+     * @param authorId 作者用户 ID
+     * @return 若粉丝数达到大 V 阈值返回 {@code true}，否则返回 {@code false}
+     */
     boolean isBig(long authorId) {
         Double followers = redis.opsForZSet().score(key, String.valueOf(authorId));
         return followers != null && followers >= threshold;
     }
 
     /**
-     * 按关注表重新统计作者的粉丝数并写入；统计的是绝对值，重复执行结果不变。
+     * 按数据库重新统计作者粉丝数并更新至 Redis。
      *
-     * @return 这次写入是否让作者从大 V 降为普通作者
+     * @param authorId 作者用户 ID
+     * @return 若本次更新使作者从大 V 降级为普通作者返回 {@code true}，否则返回 {@code false}
      */
     boolean refresh(long authorId) {
         long followers = followerGraph.countFollowers(authorId);
@@ -85,8 +97,7 @@ class BigAuthors {
     }
 
     /**
-     * 重建完成标记不存在时（首次部署、Redis 数据丢失，或造数绕过关注事件直接写库），按作者 ID 分批统计全部关注关系
-     * 重建，完成后写入标记；多个实例同时启动时各自重建一遍。
+     * 若全量就绪标记不存在，从数据库分批统计并重建全部作者粉丝数缓存。
      */
     void rebuildIfAbsent() {
         if (Boolean.TRUE.equals(redis.hasKey(readyKey))) {

@@ -14,7 +14,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.client.RestTestClient;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -74,8 +78,8 @@ class SearchApiTest extends ArticleTestSupport {
     @BeforeEach
     void hookImportBatches() {
         doAnswer(invocation -> {
-            @SuppressWarnings("unchecked")
-            List<ArticleSnapshot> batch = (List<ArticleSnapshot>) invocation.callRealMethod();
+            @SuppressWarnings("unchecked") List<ArticleSnapshot> batch =
+                    (List<ArticleSnapshot>) invocation.callRealMethod();
             onImportBatch.accept(batch);
             return batch;
         }).when(articleApi).listPublishedSnapshots(any(), anyInt());
@@ -162,12 +166,14 @@ class SearchApiTest extends ArticleTestSupport {
         client.get().uri(API + "/search/articles?q={q}&page=50&size=20", keyword)
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.list").isEmpty();
+                .expectBody()
+                .jsonPath("$.data.list").isEmpty();
         for (String paging : List.of("page=51&size=20", "page=21&size=50")) {
             client.get().uri(API + "/search/articles?q={q}&" + paging, keyword)
                     .exchange()
                     .expectStatus().isBadRequest()
-                    .expectBody().jsonPath("$.code").isEqualTo(60001);
+                    .expectBody()
+                    .jsonPath("$.code").isEqualTo(60001);
         }
         // 第一页不受影响
         client.get().uri(API + "/search/articles?q={q}&size=1", keyword)
@@ -182,12 +188,14 @@ class SearchApiTest extends ArticleTestSupport {
             client.get().uri(API + "/search/articles?" + query)
                     .exchange()
                     .expectStatus().isBadRequest()
-                    .expectBody().jsonPath("$.code").isEqualTo(90400);
+                    .expectBody()
+                    .jsonPath("$.code").isEqualTo(90400);
         }
         client.get().uri(API + "/search/articles?q={q}", "  ")
                 .exchange()
                 .expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.code").isEqualTo(90400);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90400);
     }
 
     @Test
@@ -222,8 +230,7 @@ class SearchApiTest extends ArticleTestSupport {
         String taggedId = publish(author, createDraft(author, tagged));
         String untaggedId = publish(author, createDraft(author, withTitle("Kubernetes 入门", 6, 23)));
 
-        eventually(() -> assertThat(searchIds("kubernetes"))
-                .filteredOn(Set.of(taggedId, untaggedId)::contains)
+        eventually(() -> assertThat(searchIds("kubernetes")).filteredOn(Set.of(taggedId, untaggedId)::contains)
                 .containsExactly(taggedId, untaggedId));
     }
 
@@ -235,13 +242,15 @@ class SearchApiTest extends ArticleTestSupport {
         body.put("content", "前".repeat(300) + keyword + "后".repeat(300));
         publish(author, createDraft(author, body));
 
-        eventually(() -> client.get().uri(API + "/search/articles?q={q}", keyword)
+        eventually(() -> client.get()
+                .uri(API + "/search/articles?q={q}", keyword)
                 .exchange()
                 .expectBody()
-                .jsonPath("$.data.list[0].titleHighlight").isEqualTo("关于 <em>" + keyword + "</em> 的笔记")
-                .jsonPath("$.data.list[0].contentHighlight").value(String.class, fragment -> assertThat(fragment)
-                        .contains("<em>" + keyword + "</em>")
-                        .hasSizeBetween(80, 130)));
+                .jsonPath("$.data.list[0].titleHighlight")
+                .isEqualTo("关于 <em>" + keyword + "</em> 的笔记")
+                .jsonPath("$.data.list[0].contentHighlight")
+                .value(String.class,
+                        fragment -> assertThat(fragment).contains("<em>" + keyword + "</em>").hasSizeBetween(80, 130)));
     }
 
     /**
@@ -259,12 +268,14 @@ class SearchApiTest extends ArticleTestSupport {
 
         long articleId = Long.parseLong(id);
         ArticleSnapshot latest = articleApi.findSnapshot(articleId).orElseThrow();
-        ArticleSnapshot stale = new ArticleSnapshot(latest.id(), latest.authorId(), latest.categoryId(), before,
-                latest.summary(), latest.content(), latest.tagIds(), latest.tagNames(), latest.status(),
-                latest.publishedAt(), 1, false);
-        ArticleSnapshot staleDeletion = new ArticleSnapshot(latest.id(), latest.authorId(), latest.categoryId(),
-                before, latest.summary(), latest.content(), latest.tagIds(), latest.tagNames(), latest.status(),
-                latest.publishedAt(), 1, true);
+        ArticleSnapshot stale =
+                new ArticleSnapshot(latest.id(), latest.authorId(), latest.categoryId(), before, latest.summary(),
+                        latest.content(), latest.tagIds(), latest.tagNames(), latest.status(), latest.publishedAt(), 1,
+                        false);
+        ArticleSnapshot staleDeletion =
+                new ArticleSnapshot(latest.id(), latest.authorId(), latest.categoryId(), before, latest.summary(),
+                        latest.content(), latest.tagIds(), latest.tagNames(), latest.status(), latest.publishedAt(), 1,
+                        true);
         doReturn(Optional.of(stale), Optional.of(staleDeletion)).when(articleApi).findSnapshot(articleId);
         articleIndex.sync(articleId);
         articleIndex.sync(articleId);
@@ -292,8 +303,9 @@ class SearchApiTest extends ArticleTestSupport {
         assertThat(searchBody(keyword)).isEqualTo(before);
         Set<String> newIndices = aliasedIndices();
         assertThat(newIndices).hasSize(1).doesNotContainAnyElementsOf(oldIndices);
-        assertThat(elasticsearchClient.indices().exists(exists -> exists.index(List.copyOf(oldIndices))).value())
-                .isFalse();
+        assertThat(elasticsearchClient.indices()
+                .exists(exists -> exists.index(List.copyOf(oldIndices)))
+                .value()).isFalse();
     }
 
     /**
@@ -314,8 +326,8 @@ class SearchApiTest extends ArticleTestSupport {
         });
         AtomicBoolean changed = new AtomicBoolean();
         onImportBatch = batch -> {
-            if (batch.stream().anyMatch(snapshot -> snapshot.id().toString().equals(removed))
-                    && changed.compareAndSet(false, true)) {
+            if (batch.stream().anyMatch(snapshot -> snapshot.id().toString().equals(removed)) && changed.compareAndSet(
+                    false, true)) {
                 edit(author, id, 1, withTitle(edited)).expectStatus().isOk();
                 delete(author, removed);
                 eventually(() -> {
@@ -386,17 +398,18 @@ class SearchApiTest extends ArticleTestSupport {
     }
 
     private RestTestClient.ResponseSpec rebuild() {
-        return RestTestClient.bindToServer().baseUrl("http://localhost:" + managementPort).build()
-                .post().uri("/actuator/search-rebuild")
+        return RestTestClient.bindToServer()
+                .baseUrl("http://localhost:" + managementPort)
+                .build()
+                .post()
+                .uri("/actuator/search-rebuild")
                 .exchange();
     }
 
     private String searchBody(String keyword) {
         return client.get().uri(API + "/search/articles?q={q}", keyword)
                 .exchange()
-                .expectStatus().isOk()
-                .returnResult(String.class)
-                .getResponseBody();
+                .expectStatus().isOk().returnResult(String.class).getResponseBody();
     }
 
     private Set<String> aliasedIndices() throws IOException {

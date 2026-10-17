@@ -12,6 +12,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * 文章与标签关联服务实现类。
+ */
 @Service
 public class ArticleTagServiceImpl extends ServiceImpl<ArticleTagMapper, ArticleTag> implements ArticleTagService {
 
@@ -20,7 +23,10 @@ public class ArticleTagServiceImpl extends ServiceImpl<ArticleTagMapper, Article
         if (articleIds.isEmpty()) {
             return Map.of();
         }
-        return lambdaQuery().in(ArticleTag::getArticleId, articleIds).orderByAsc(ArticleTag::getTagId).list().stream()
+        return lambdaQuery().in(ArticleTag::getArticleId, articleIds)
+                .orderByAsc(ArticleTag::getTagId)
+                .list()
+                .stream()
                 .collect(Collectors.groupingBy(ArticleTag::getArticleId,
                         Collectors.mapping(ArticleTag::getTagId, Collectors.toList())));
     }

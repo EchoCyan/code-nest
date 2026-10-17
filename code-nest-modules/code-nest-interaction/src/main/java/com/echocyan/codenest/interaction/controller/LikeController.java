@@ -7,8 +7,17 @@ import com.echocyan.codenest.interaction.service.ArticleLikeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 文章点赞控制器。
+ *
+ * <p>提供文章的点赞与取消点赞操作接口。
+ */
 @Tag(name = "点赞")
 @RestController
 @RequestMapping("/articles/{id}/like")
@@ -17,6 +26,12 @@ public class LikeController {
 
     private final ArticleLikeService articleLikeService;
 
+    /**
+     * 对指定文章执行点赞。
+     *
+     * @param id 目标文章 ID
+     * @return 成功响应
+     */
     @Operation(summary = "点赞", description = "已点过赞时不产生变化；只能对已发布的文章点赞")
     @RateLimit("like-favorite-per-minute")
     @PutMapping
@@ -25,6 +40,12 @@ public class LikeController {
         return Result.ok();
     }
 
+    /**
+     * 取消对指定文章的点赞。
+     *
+     * @param id 目标文章 ID
+     * @return 成功响应
+     */
     @Operation(summary = "取消点赞", description = "没点过赞时不产生变化")
     @RateLimit("like-favorite-per-minute")
     @DeleteMapping

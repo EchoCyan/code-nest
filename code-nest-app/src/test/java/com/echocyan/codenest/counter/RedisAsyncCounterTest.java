@@ -61,12 +61,13 @@ class RedisAsyncCounterTest extends ArticleTestSupport {
         String authorId = authorIdOf(author, articleId);
         List<RestTestClient> readers = List.of(reader(), reader(), reader());
         readers.forEach(reader -> like(reader, articleId));
-        readers.getFirst().delete().uri(API + "/articles/{id}/like", articleId).exchange().expectStatus().isOk();
+        readers.getFirst().delete().uri(API + "/articles/{id}/like", articleId)
+                .exchange()
+                .expectStatus().isOk();
 
         await().atMost(FLUSHED).untilAsserted(() -> {
-            assertThat(stat("article_stat", "like_count", "article_id", articleId))
-                    .isEqualTo(count("SELECT COUNT(*) FROM article_like WHERE article_id = ?", articleId))
-                    .isEqualTo(2);
+            assertThat(stat("article_stat", "like_count", "article_id", articleId)).isEqualTo(
+                    count("SELECT COUNT(*) FROM article_like WHERE article_id = ?", articleId)).isEqualTo(2);
             assertThat(stat("user_stat", "like_received_count", "user_id", authorId)).isEqualTo(2);
         });
     }
@@ -116,8 +117,9 @@ class RedisAsyncCounterTest extends ArticleTestSupport {
         String authorId = authorIdOf(author, articleId);
         like(reader(), articleId);
         like(reader(), articleId);
-        await().atMost(FLUSHED).until(() -> stat("article_stat", "like_count", "article_id", articleId) == 2
-                && stat("user_stat", "like_received_count", "user_id", authorId) == 2);
+        await().atMost(FLUSHED)
+                .until(() -> stat("article_stat", "like_count", "article_id", articleId) == 2
+                        && stat("user_stat", "like_received_count", "user_id", authorId) == 2);
 
         redis.delete(List.of("counter:article:" + articleId, "counter:user:" + authorId));
 
@@ -129,7 +131,8 @@ class RedisAsyncCounterTest extends ArticleTestSupport {
         eventually(() -> expectLikes(articleId, 3));
         eventually(() -> client.get().uri(API + "/users/{id}", authorId)
                 .exchange()
-                .expectBody().jsonPath("$.data.counts.likeReceivedCount").isEqualTo(3));
+                .expectBody()
+                .jsonPath("$.data.counts.likeReceivedCount").isEqualTo(3));
     }
 
     @Test
@@ -143,8 +146,9 @@ class RedisAsyncCounterTest extends ArticleTestSupport {
         redis.opsForHash().delete("counter:article:" + articleId, "view");
         like(reader(), articleId);
 
-        await().atMost(FLUSHED).untilAsserted(() ->
-                assertThat(stat("article_stat", "like_count", "article_id", articleId)).isEqualTo(2));
+        await().atMost(FLUSHED)
+                .untilAsserted(
+                        () -> assertThat(stat("article_stat", "like_count", "article_id", articleId)).isEqualTo(2));
         expectLikes(articleId, 2);
     }
 
@@ -165,30 +169,35 @@ class RedisAsyncCounterTest extends ArticleTestSupport {
     }
 
     private void like(RestTestClient reader, String articleId) {
-        reader.put().uri(API + "/articles/{id}/like", articleId).exchange().expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/like", articleId)
+                .exchange()
+                .expectStatus().isOk();
     }
 
     private void expectLikes(String articleId, int expected) {
         client.get().uri(API + "/articles/{id}", articleId)
                 .exchange()
-                .expectBody().jsonPath("$.data.counts.likeCount").isEqualTo(expected);
+                .expectBody()
+                .jsonPath("$.data.counts.likeCount").isEqualTo(expected);
     }
 
     private long replies(long commentId) {
-        return counterApi.get(CounterTarget.COMMENT, List.of(commentId)).get(commentId)
+        return counterApi.get(CounterTarget.COMMENT, List.of(commentId))
+                .get(commentId)
                 .get(CounterMetric.COMMENT_REPLY);
     }
 
     private long stat(String table, String column, String idColumn, String id) {
-        List<Long> values = jdbcTemplate.queryForList(
-                "SELECT " + column + " FROM " + table + " WHERE " + idColumn + " = ?", Long.class, id);
+        List<Long> values =
+                jdbcTemplate.queryForList("SELECT " + column + " FROM " + table + " WHERE " + idColumn + " = ?",
+                        Long.class, id);
         return values.isEmpty() ? 0 : values.getFirst();
     }
 
     private long outboxRows(long targetId) {
         return jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM mq_outbox WHERE routing_key = 'counter.changed' AND payload LIKE ?",
-                Long.class, "%" + targetId + "%");
+                "SELECT COUNT(*) FROM mq_outbox WHERE routing_key = 'counter.changed' AND payload LIKE ?", Long.class,
+                "%" + targetId + "%");
     }
 
     private long count(String sql, String id) {
@@ -199,8 +208,7 @@ class RedisAsyncCounterTest extends ArticleTestSupport {
      * 经默认交换机直接投递一条回复数 +1 的消息，消息格式与 DomainEventPublisher 发出的一致。
      */
     private void send(String messageId, long commentId) {
-        String body = "{\"changes\":[{\"metric\":\"COMMENT_REPLY\",\"targetId\":%d,\"delta\":1}]}"
-                .formatted(commentId);
+        String body = "{\"changes\":[{\"metric\":\"COMMENT_REPLY\",\"targetId\":%d,\"delta\":1}]}".formatted(commentId);
         Message message = MessageBuilder.withBody(body.getBytes(StandardCharsets.UTF_8))
                 .setMessageId(messageId)
                 .setType(CounterChangedEvent.class.getName())
