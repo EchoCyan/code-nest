@@ -5,16 +5,21 @@ import com.echocyan.codenest.user.api.UserBrief;
 import java.time.LocalDateTime;
 
 /**
- * 文章下的一条评论，不内嵌回复。
+ * 一级根评论视图对象。
+ * <p>
+ * 仅包含评论本体与回复统计数，楼中楼回复通过独立接口按需拉取。
  *
- * @param deleted 已删除但仍有回复的评论为 true，此时 content 为"该评论已删除"、author 为 null
- * @param author  评论者简要信息；用户不存在时为 null
+ * @param id         评论 ID
+ * @param content    评论内容；若已被软删除但名下仍有子回复，脱敏展示为预置文案（如“该评论已删除”）
+ * @param deleted    软删除标识；为 {@code true} 时表明该评论仅作占位展示以维持讨论树完整性
+ * @param author     发表者用户信息；评论被软删除或用户已注销时为 {@code null}
+ * @param replyCount 当前根评论下的二级回复总数
+ * @param createdAt  评论发表时间
  */
-public record CommentVO(
-        Long id,
-        String content,
-        boolean deleted,
-        UserBrief author,
-        long replyCount,
-        LocalDateTime createdAt) {
+public record CommentVO(Long id,
+                        String content,
+                        boolean deleted,
+                        UserBrief author,
+                        long replyCount,
+                        LocalDateTime createdAt) {
 }

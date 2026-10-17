@@ -14,20 +14,30 @@ import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Redis 计数存储，MySQL 计数表是它的持久副本。
+ * Redis 计数存储组件。
  *
- * <p>key 设计：
+ * <p>以 Redis 为主计数介质，MySQL 作为持久化镜像。键设计规范如下：
  * <ul>
- *     <li>{@code counter:{type}:{id}}：一个对象的全部计数，Hash，字段名见 {@link CounterTables#field}，不设 TTL。
- *     新增指标后，已有的 Hash 里没有新字段，按缺失处理。</li>
- *     <li>{@code counter:dirty:{type}}：待落库的对象 ID，Set。</li>
- *     <li>{@code counter:dedup:{messageId}}：消费去重标记，24 小时过期。</li>
+ *   <li>{@code counter:{target}:{id}}：对象全量计数 Hash，字段名对应 {@link CounterTables#field}，不设 TTL。</li>
+ *   <li>{@code counter:dirty:{target}}：待落库对象 ID 集合（Set）。</li>
+ *   <li>{@code counter:dedup:{messageId}}：消费去重键，24 小时过期。</li>
  * </ul>
- * Hash 或其中的字段不存在时一律先从 MySQL 回填、且只写入仍缺失的字段，不能直接累加，否则会从 0 开始把已有计数冲掉。
+ *
+ * <p>核心机制保障：
+ * <ul>
+ *   <li>原子更新：Lua 脚本执行累加与幂等去重；Hash 或字段缺失时先从 MySQL 回填（{@code HSETNX}）再累加，避免冲零。</li>
+ *   <li>定时落库：定时以 {@code SPOP} 拉取待落库集合，以绝对值批量写入 MySQL。</li>
+ * </ul>
  */
 @Slf4j
 @Component
@@ -35,21 +45,26 @@ import java.util.concurrent.TimeUnit;
 class RedisCounterStore {
 
     /**
-     * 每次 {@code SPOP} 取出的对象数上限，也是一条批量写入语句的行数上限。
+     * 单次落库 {@code SPOP} 取出的对象数量上限与单条批量 SQL 行数上限。
      */
     static final int FLUSH_BATCH = 1000;
 
     /**
-     * 必须长于 Outbox 补发的最长时限（12 小时），否则补发的重复消息会被再累加一次。
+     * 消费去重键过期时长（24 小时），大于 Outbox 最大重发窗口（12 小时）。
      */
     private static final Duration DEDUP_TTL = Duration.ofDays(1);
 
+    /**
+     * Lua 脚本返回值：表示 Hash 或指定字段不存在，需执行回填。
+     */
     private static final Long MISS = -1L;
 
     /**
-     * KEYS：计数 Hash、待落库集合、去重 key（可选）；ARGV：字段、增量、对象 ID、去重 key 过期秒数。
-     * 返回 -1 表示 Hash 或该字段不存在（MISS），0 表示重复消息，1 表示已累加。
-     * 去重 key 在累加成功后才写入：脚本中途出错时不会留下标记，重试不会被误判为重复。
+     * 计数累加与去重 Lua 脚本。
+     *
+     * <p>KEYS[1]: 计数 Hash，KEYS[2]: 待落库集合，KEYS[3]: 去重 Key（可选）。<br>
+     * ARGV[1]: 字段名，ARGV[2]: 增量，ARGV[3]: 对象 ID，ARGV[4]: 去重过期秒数。<br>
+     * 返回：-1 为 MISS，0 为重复消息，1 为更新成功。
      */
     private static final RedisScript<Long> INCREMENT = RedisScript.of("""
             if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 0 then
@@ -69,7 +84,7 @@ class RedisCounterStore {
             """, Long.class);
 
     /**
-     * KEYS：计数 Hash；ARGV：依次为各字段名和值。只写入 Hash 中还不存在的字段，已有的值不变。
+     * 缺失字段懒回填 Lua 脚本（使用 {@code HSETNX} 仅写入 Hash 中不存在的字段，保留已有计数）。
      */
     private static final byte[] BACKFILL = """
             for i = 1, #ARGV, 2 do
@@ -79,8 +94,7 @@ class RedisCounterStore {
             """.getBytes(StandardCharsets.UTF_8);
 
     /**
-     * KEYS：计数 Hash、待落库集合；ARGV：字段、新值、对象 ID。只在 Hash 存在时写入并标记为待落库，
-     * 不存在时留给下次访问从 MySQL 回填。
+     * 计数纠偏重置 Lua 脚本（仅在 Hash 存在时覆写并标记待落库，不存在时留给下次读取懒加载）。
      */
     private static final RedisScript<Long> RESET_IF_PRESENT = RedisScript.of("""
             if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -107,10 +121,13 @@ class RedisCounterStore {
     }
 
     /**
-     * 原子地增减一项计数（结果最小为 0），并把对象标记为待落库。
+     * 原子增减对象计数值（计算结果下限为 0），并将对象加入待落库集合。
      *
-     * @param messageId 不为 null 时按它去重，同一个 messageId 在 24 小时内只生效一次
-     * @throws IllegalStateException 回填后 Hash 或该字段仍然不存在
+     * @param metric    计数指标
+     * @param targetId  目标对象 ID
+     * @param delta     增量（支持负数）
+     * @param messageId 幂等去重标识；为 null 时不去重
+     * @throws IllegalStateException 若回填后该字段在 Redis 中仍不存在
      */
     void increment(CounterMetric metric, long targetId, long delta, String messageId) {
         CounterTarget target = metric.target();
@@ -126,13 +143,16 @@ class RedisCounterStore {
             }
             backfill(target, List.of(targetId));
         }
-        throw new IllegalStateException("计数回填后仍不存在: " + hashKey(target, targetId) + " " + CounterTables.field(metric));
+        throw new IllegalStateException(
+                "计数回填后仍不存在: " + hashKey(target, targetId) + " " + CounterTables.field(metric));
     }
 
     /**
-     * 批量读取。Redis 里没有 Hash 或缺少字段的对象，先从 MySQL 批量回填缺失的部分再读一次。
+     * 批量读取对象计数；若缓存未命中或缺少字段，自动从 MySQL 批量回填后再读。
      *
-     * @return 每个传入的 ID 都有一项
+     * @param target    目标实体类型
+     * @param targetIds 对象 ID 集合
+     * @return 对象 ID 到各项计数的映射
      */
     Map<Long, Counts> get(CounterTarget target, Collection<Long> targetIds) {
         List<Long> ids = List.copyOf(new LinkedHashSet<>(targetIds));
@@ -148,17 +168,22 @@ class RedisCounterStore {
     }
 
     /**
-     * 只读 Redis，不回填。
+     * 仅从 Redis 读取对象计数，不触发数据库回填。
      *
-     * @return 只包含 Hash 存在且字段齐全的对象
+     * @param target    目标实体类型
+     * @param targetIds 对象 ID 集合
+     * @return 仅包含缓存存在且字段齐全的对象计数映射
      */
     Map<Long, Counts> getIfPresent(CounterTarget target, Collection<Long> targetIds) {
         return read(target, List.copyOf(new LinkedHashSet<>(targetIds)));
     }
 
     /**
-     * Hash 存在时把一项计数改为给定值，并标记为待落库：即使此前已读出旧值的落库批次随后覆盖了 MySQL，
-     * 下一次落库也会写回新值。Hash 不存在时不写入。
+     * 若缓存存在，重置指定计数值并标记待落库；若缓存不存在则不写入。
+     *
+     * @param metric   计数指标
+     * @param targetId 目标对象 ID
+     * @param value    重置计数值
      */
     void resetIfPresent(CounterMetric metric, long targetId, long value) {
         CounterTarget target = metric.target();
@@ -167,12 +192,9 @@ class RedisCounterStore {
     }
 
     /**
-     * 把待落库的对象按绝对值写回 MySQL，重复写结果不变。{@code SPOP} 是原子的，多个实例同时落库不会处理同一个对象。
-     * 写库失败时把这批 ID 放回待落库集合。已知缺陷，均由下次变更或对账修正：
-     * <ul>
-     *     <li>实例在取出之后、写库之前崩溃，这批对象的标记丢失。</li>
-     *     <li>多个实例时，一个批次读出旧值后，同一对象再次变更并被另一实例先写入新值，前者随后用旧值覆盖。</li>
-     * </ul>
+     * 定时异步落库任务，每 5 秒执行一次。
+     *
+     * <p>利用 {@code SPOP} 的原子性防止多实例并发冲突；将变更对象以绝对值批量写入 MySQL。
      */
     @Scheduled(fixedDelay = 5, timeUnit = TimeUnit.SECONDS)
     void flush() {
@@ -185,7 +207,11 @@ class RedisCounterStore {
     }
 
     /**
-     * @return 是否写入成功
+     * 执行单批次对象计数的持久化写入；失败时将 ID 放回待落库集合。
+     *
+     * @param target 目标实体类型
+     * @param ids    待落库对象 ID 列表
+     * @return 写入是否成功
      */
     private boolean flush(CounterTarget target, List<String> ids) {
         if (ids.isEmpty()) {
@@ -197,16 +223,18 @@ class RedisCounterStore {
             return true;
         } catch (RuntimeException e) {
             redis.opsForSet().add(dirtyKey(target), ids.toArray(String[]::new));
-            log.error("Failed to flush counters, ids are returned to the dirty set: target={}, size={}",
-                    target, ids.size(), e);
+            log.error("Failed to flush counters, ids are returned to the dirty set: target={}, size={}", target,
+                    ids.size(), e);
             return false;
         }
     }
 
     /**
-     * 用 pipeline 批量 {@code HMGET}。
+     * 基于 Pipeline 批量执行 {@code HMGET} 读取对象计数。
      *
-     * @return 只包含 Hash 存在且字段齐全的对象
+     * @param target 目标实体类型
+     * @param ids    对象 ID 列表
+     * @return 存在且字段完整的对象计数映射
      */
     private Map<Long, Counts> read(CounterTarget target, List<Long> ids) {
         List<CounterMetric> metrics = CounterTables.metrics(target);
@@ -231,9 +259,11 @@ class RedisCounterStore {
     }
 
     /**
-     * 从 MySQL 批量读出计数（没有计数行的对象按全 0），用 pipeline 逐个回填到 Redis，只写入缺失的字段。
+     * 从 MySQL 加载事实计数，并通过 Pipeline 执行 {@code HSETNX} 懒回填至 Redis。
      *
-     * @return 从 MySQL 读出的计数，每个传入的 ID 都有一项
+     * @param target 目标实体类型
+     * @param ids    对象 ID 列表
+     * @return 从 MySQL 读取的计数值映射（包含全量入参 ID）
      */
     private Map<Long, Counts> backfill(CounterTarget target, List<Long> ids) {
         Map<Long, Counts> loaded = counterTables.select(target, ids);
@@ -247,11 +277,12 @@ class RedisCounterStore {
                     keysAndArgs.add(bytes(CounterTables.field(metric)));
                     keysAndArgs.add(bytes(String.valueOf(counts.get(metric))));
                 });
-                connection.scriptingCommands().eval(BACKFILL, ReturnType.INTEGER, 1,
-                        keysAndArgs.toArray(byte[][]::new));
+                connection.scriptingCommands()
+                        .eval(BACKFILL, ReturnType.INTEGER, 1, keysAndArgs.toArray(byte[][]::new));
             });
             return null;
         });
         return loaded;
     }
 }
+

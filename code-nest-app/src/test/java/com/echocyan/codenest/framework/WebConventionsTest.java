@@ -26,12 +26,13 @@ class WebConventionsTest extends IntegrationTest {
 
     @Test
     void keepsPrimitiveLongAsNumberInPageResult() {
-        client.get().uri(API + "/probe/page")
+        client.get()
+                .uri(API + "/probe/page")
                 .exchange()
-                .expectStatus().isOk()
+                .expectStatus()
+                .isOk()
                 .expectBody(String.class)
-                .value(body -> assertThat(body)
-                        .contains("\"list\":[\"1234567890123456789\"]")
+                .value(body -> assertThat(body).contains("\"list\":[\"1234567890123456789\"]")
                         .contains("\"total\":42")
                         .contains("\"page\":1")
                         .contains("\"size\":20"));
@@ -39,20 +40,21 @@ class WebConventionsTest extends IntegrationTest {
 
     @Test
     void acceptsOffsetTimeInRequestBody() {
-        client.post().uri(API + "/probe/echo")
+        client.post()
+                .uri(API + "/probe/echo")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"name\":\"n\",\"at\":\"2026-09-23T02:00:00Z\"}")
                 .exchange()
-                .expectStatus().isOk()
+                .expectStatus()
+                .isOk()
                 .expectBody()
-                .jsonPath("$.data.at").isEqualTo("2026-09-23T10:00:00+08:00");
+                .jsonPath("$.data.at")
+                .isEqualTo("2026-09-23T10:00:00+08:00");
     }
 
     @Test
     void bodyValidationFailureIs400() {
-        client.post().uri(API + "/probe/echo")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body("{\"name\":\"\"}")
+        client.post().uri(API + "/probe/echo").contentType(MediaType.APPLICATION_JSON).body("{\"name\":\"\"}")
                 .exchange()
                 .expectStatus().isBadRequest()
                 .expectBody()
@@ -65,11 +67,13 @@ class WebConventionsTest extends IntegrationTest {
         client.get().uri(API + "/probe/size?size=51")
                 .exchange()
                 .expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.code").isEqualTo(90400);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90400);
         client.get().uri(API + "/probe/size?size=abc")
                 .exchange()
                 .expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.code").isEqualTo(90400);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90400);
     }
 
     @Test
@@ -77,17 +81,18 @@ class WebConventionsTest extends IntegrationTest {
         client.get().uri(API + "/probe/header")
                 .exchange()
                 .expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.code").isEqualTo(90400);
-        client.post().uri(API + "/probe/echo")
-                .contentType(MediaType.TEXT_PLAIN)
-                .body("name")
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90400);
+        client.post().uri(API + "/probe/echo").contentType(MediaType.TEXT_PLAIN).body("name")
                 .exchange()
                 .expectStatus().isEqualTo(415)
-                .expectBody().jsonPath("$.code").isEqualTo(90400);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90400);
         client.delete().uri(API + "/probe/sample")
                 .exchange()
                 .expectStatus().isEqualTo(405)
-                .expectBody().jsonPath("$.code").isEqualTo(90400);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90400);
     }
 
     @Test
@@ -95,7 +100,8 @@ class WebConventionsTest extends IntegrationTest {
         client.get().uri(API + "/probe/forbidden")
                 .exchange()
                 .expectStatus().isForbidden()
-                .expectBody().jsonPath("$.code").isEqualTo(90403);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90403);
     }
 
     @Test
@@ -113,7 +119,8 @@ class WebConventionsTest extends IntegrationTest {
         client.get().uri(API + "/no-such-thing")
                 .exchange()
                 .expectStatus().isNotFound()
-                .expectBody().jsonPath("$.code").isEqualTo(90404);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90404);
     }
 
     @Test

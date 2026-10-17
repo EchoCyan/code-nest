@@ -35,11 +35,13 @@ class FollowApiTest extends IntegrationTest {
 
         for (RestTestClient.ResponseSpec response : List.of(follow(reader, readerId), unfollow(reader, readerId))) {
             response.expectStatus().isBadRequest()
-                    .expectBody().jsonPath("$.code").isEqualTo(40001);
+                    .expectBody()
+                    .jsonPath("$.code").isEqualTo(40001);
         }
         for (RestTestClient.ResponseSpec response : List.of(follow(reader, "1"), unfollow(reader, "1"))) {
             response.expectStatus().isNotFound()
-                    .expectBody().jsonPath("$.code").isEqualTo(10003);
+                    .expectBody()
+                    .jsonPath("$.code").isEqualTo(10003);
         }
         expectCounts(readerId, 0, 0);
     }
@@ -136,11 +138,13 @@ class FollowApiTest extends IntegrationTest {
         reader.get().uri(API + "/users/follow-states?ids={ids}", fiftyOne)
                 .exchange()
                 .expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.code").isEqualTo(90400);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90400);
     }
 
     private RestTestClient.ResponseSpec unfollow(RestTestClient follower, String userId) {
-        return follower.delete().uri(API + "/users/{id}/follow", userId).exchange();
+        return follower.delete().uri(API + "/users/{id}/follow", userId)
+                .exchange();
     }
 
     private void expectCounts(String userId, int followers, int followings) {

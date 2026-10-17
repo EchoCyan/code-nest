@@ -16,13 +16,24 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.SortedSet;
+import java.util.TreeSet;
+import java.util.UUID;
 import java.util.stream.LongStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Feed 存储的推送、拉取、修正、过滤与重建。每个测试另建 {@link FeedStore}，用随机的 key 前缀、内存里的关注关系和
@@ -181,8 +192,7 @@ class FeedStoreTest extends IntegrationTest {
      */
     @Test
     void lostOutboxesAndFollowerCountsAreRebuiltAtStartup() {
-        when(articleApi.listPublishedStates(isNull(), anyInt()))
-                .thenThrow(new IllegalStateException("数据库连接断开"))
+        when(articleApi.listPublishedStates(isNull(), anyInt())).thenThrow(new IllegalStateException("数据库连接断开"))
                 .thenReturn(List.of(state(1, NORMAL), state(2, BIG)));
         published.put(1L, NORMAL);
         published.put(2L, BIG);
@@ -243,7 +253,8 @@ class FeedStoreTest extends IntegrationTest {
 
         @Override
         public List<Long> listAllFollowedAuthorIds(long followerId) {
-            return followersByAuthor.entrySet().stream()
+            return followersByAuthor.entrySet()
+                    .stream()
                     .filter(entry -> entry.getValue().contains(followerId))
                     .map(Map.Entry::getKey)
                     .toList();
@@ -265,7 +276,8 @@ class FeedStoreTest extends IntegrationTest {
 
         @Override
         public List<IdCount> countFollowersAfter(long afterAuthorId, int limit) {
-            return followersByAuthor.entrySet().stream()
+            return followersByAuthor.entrySet()
+                    .stream()
                     .filter(entry -> entry.getKey() > afterAuthorId && !entry.getValue().isEmpty())
                     .sorted(Map.Entry.comparingByKey())
                     .limit(limit)

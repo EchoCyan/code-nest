@@ -15,6 +15,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 热门文章控制器。
+ */
 @Tag(name = "热榜")
 @RestController
 @RequestMapping("/hot-articles")
@@ -23,6 +26,12 @@ public class HotArticleController {
 
     private final HotArticleService hotArticleService;
 
+    /**
+     * 分页查询热门文章榜单。
+     *
+     * @param page 页码（默认 1，上限为 {@value HotArticleService#MAX_PAGE}）
+     * @return 热门文章分页结果
+     */
     @SaIgnore
     @Operation(summary = "热榜", description = "综合互动与发布时间的 Top 100，约每 5 分钟更新；每页 20 条，最多 5 页")
     @GetMapping

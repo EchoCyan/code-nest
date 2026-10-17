@@ -12,7 +12,9 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 
 /**
- * 手动触发计数对账：{@code POST /actuator/counter-reconcile}，只在管理端口上提供。
+ * 计数对账 Actuator 运维端点。
+ *
+ * <p>暴露为 {@code POST /actuator/counter-reconcile}，仅在内部管理端口提供，用于手动触发全量对账。
  */
 @Component
 @Endpoint(id = "counter-reconcile")
@@ -22,9 +24,9 @@ class CounterReconcileEndpoint {
     private final CounterReconcileService counterReconcileService;
 
     /**
-     * 同步执行，对账结束后返回。
+     * 手动触发同步全量对账。
      *
-     * @return 200 与各指标被修正的对象数；其他实例正在对账时 409
+     * @return 响应包含对账结果；若成功获取锁并完成对账返回 HTTP 200 及各指标修正数，若已有对账在执行返回 HTTP 409
      */
     @WriteOperation
     public WebEndpointResponse<Map<CounterMetric, Long>> reconcile() {

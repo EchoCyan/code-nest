@@ -65,8 +65,8 @@ class TwoLevelCacheTest extends IntegrationTest {
         String name = uniqueName();
         BloomFilter bloomFilter = bloomFilterOf(name, ID);
         TwoLevelCaches otherInstance = new TwoLevelCaches(redis, jsonMapper);
-        RedisMessageListenerContainer otherSubscription = new CacheInvalidationConfig()
-                .cacheInvalidationListenerContainer(connectionFactory, otherInstance);
+        RedisMessageListenerContainer otherSubscription =
+                new CacheInvalidationConfig().cacheInvalidationListenerContainer(connectionFactory, otherInstance);
         otherSubscription.afterPropertiesSet();
         otherSubscription.start();
         try {
@@ -149,8 +149,8 @@ class TwoLevelCacheTest extends IntegrationTest {
         })).isInstanceOf(IllegalStateException.class);
 
         BloomFilter restarted = caches.bloomFilter(name);
-        restarted.rebuildIfAbsent(afterId -> afterId == null ? List.of(ID) : afterId == ID ? List.of(secondBatch)
-                : List.of());
+        restarted.rebuildIfAbsent(
+                afterId -> afterId == null ? List.of(ID) : afterId == ID ? List.of(secondBatch) : List.of());
         TwoLevelCache<String> cache = caches.createTwoLevel(name, String.class, restarted);
 
         assertThat(cache.get(secondBatch, id -> "imported after restart")).isEqualTo("imported after restart");

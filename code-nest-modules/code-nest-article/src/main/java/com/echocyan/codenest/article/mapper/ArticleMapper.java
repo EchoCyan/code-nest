@@ -9,11 +9,18 @@ import org.apache.ibatis.annotations.Select;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * 文章 Mapper 接口。
+ */
 @Mapper
 public interface ArticleMapper extends BaseMapper<Article> {
 
     /**
-     * 作者 ID 大于 afterId 的各作者未删除的已发布文章数，按作者 ID 升序。
+     * 批量统计各作者已发布的有效文章数。
+     *
+     * @param afterId 作者 ID 游标
+     * @param limit   单批记录数
+     * @return 统计结果列表
      */
     @Select("""
             SELECT author_id, COUNT(*) FROM article
@@ -23,13 +30,21 @@ public interface ArticleMapper extends BaseMapper<Article> {
     List<IdCount> countPublishedByAuthor(long afterId, int limit);
 
     /**
-     * 按 ID 查询，已删除的文章也返回；自定义 SQL 不会被追加逻辑删除条件。
+     * 根据主键查询文章实体（包含已删除记录）。
+     *
+     * @param id 文章 ID
+     * @return 文章实体；若不存在则返回 {@code null}
      */
     @Select("SELECT * FROM article WHERE id = #{id}")
     Article selectByIdIncludingDeleted(long id);
 
     /**
-     * {@code updated_at} 不早于 since、ID 大于 afterId 的文章，已删除的也返回，按 ID 正序。
+     * 游标查询指定时间后更新的文章（包含已删除记录），按 ID 升序。
+     *
+     * @param since   更新时间起始下限
+     * @param afterId 文章 ID 游标
+     * @param limit   单批记录数
+     * @return 变更文章列表
      */
     @Select("""
             SELECT * FROM article

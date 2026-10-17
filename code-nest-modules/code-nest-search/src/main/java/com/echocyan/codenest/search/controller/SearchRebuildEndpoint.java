@@ -10,7 +10,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 /**
- * 手动触发搜索索引重建：{@code POST /actuator/search-rebuild}，只在管理端口上提供。
+ * 搜索索引全量重建管理端点。
+ * <p>
+ * 仅在 Actuator 管理端口上暴露（{@code POST /actuator/search-rebuild}），用于运维手动触发零停机索引重建。
  */
 @Component
 @Endpoint(id = "search-rebuild")
@@ -20,9 +22,9 @@ class SearchRebuildEndpoint {
     private final ArticleIndex articleIndex;
 
     /**
-     * 同步执行，重建结束后返回。
+     * 同步触发搜索索引重建。
      *
-     * @return 200 与新索引名、导入和追补的文章数；已有重建在运行时 409
+     * @return 响应结果：200 成功，返回新索引版本及导入/追补文章数；409 冲突，表示已有重建任务正在运行
      */
     @WriteOperation
     public WebEndpointResponse<RebuildResult> rebuild() {

@@ -1,3 +1,0 @@
-interface:
-  display_name: "Codex Subagent"
-  short_description: "Delegate a task to a Codex subagent in a Herdr tab"

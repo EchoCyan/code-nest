@@ -13,7 +13,12 @@ import com.echocyan.codenest.article.vo.ReplyVO;
 import com.echocyan.codenest.common.exception.BizException;
 import com.echocyan.codenest.common.exception.CommonErrorCode;
 import com.echocyan.codenest.common.result.CursorResult;
-import com.echocyan.codenest.counter.api.*;
+import com.echocyan.codenest.counter.api.CounterApi;
+import com.echocyan.codenest.counter.api.CounterMetric;
+import com.echocyan.codenest.counter.api.CounterSource;
+import com.echocyan.codenest.counter.api.CounterTarget;
+import com.echocyan.codenest.counter.api.Counts;
+import com.echocyan.codenest.counter.api.IdCount;
 import com.echocyan.codenest.framework.mq.DomainEventPublisher;
 import com.echocyan.codenest.user.api.UserApi;
 import com.echocyan.codenest.user.api.UserBrief;
@@ -28,13 +33,15 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
+/**
+ * 评论与楼中楼回复服务实现类。
+ */
 @Service
 @RequiredArgsConstructor
-public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> implements CommentService,
-        CounterSource {
+public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> implements CommentService, CounterSource {
 
     /**
-     * 已删除但仍有回复的评论显示的内容。
+     * 已删除评论的占位文案
      */
     private static final String DELETED_CONTENT = "该评论已删除";
 
@@ -62,8 +69,9 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
     @Override
     public CursorResult<CommentVO> listComments(long articleId, Long cursor, int size) {
         requirePublished(articleId);
-        CursorResult<Comment> page = CursorResult.ofOverfetched(baseMapper.selectVisibleComments(
-                articleId, cursor == null ? Long.MAX_VALUE : cursor, size + 1), size, Comment::getId);
+        CursorResult<Comment> page = CursorResult.ofOverfetched(
+                baseMapper.selectVisibleComments(articleId, cursor == null ? Long.MAX_VALUE : cursor, size + 1), size,
+                Comment::getId);
         return page.map(commentVOMapper(page.list()));
     }
 
@@ -103,24 +111,22 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
             throw new BizException(ArticleErrorCode.COMMENT_NOT_FOUND);
         }
         requirePublished(root.getArticleId());
-        CursorResult<Comment> page = CursorResult.ofOverfetched(lambdaQuery()
-                .eq(Comment::getArticleId, root.getArticleId())
-                .eq(Comment::getRootId, commentId)
-                .gt(cursor != null, Comment::getId, cursor)
-                .orderByAsc(Comment::getId)
-                .last("LIMIT " + (size + 1))
-                .list(), size, Comment::getId);
-        Map<Long, UserBrief> users = userApi.getBriefs(page.list().stream()
+        CursorResult<Comment> page = CursorResult.ofOverfetched(
+                lambdaQuery().eq(Comment::getArticleId, root.getArticleId())
+                        .eq(Comment::getRootId, commentId)
+                        .gt(cursor != null, Comment::getId, cursor)
+                        .orderByAsc(Comment::getId)
+                        .last("LIMIT " + (size + 1))
+                        .list(), size, Comment::getId);
+        Map<Long, UserBrief> users = userApi.getBriefs(page.list()
+                .stream()
                 .flatMap(reply -> Stream.of(reply.getUserId(), reply.getReplyToUserId()))
                 .filter(Objects::nonNull)
                 .toList());
-        return page.map(reply -> new ReplyVO(
-                reply.getId(),
-                reply.getRootId(),
-                reply.getContent(),
-                users.get(reply.getUserId()),
-                reply.getReplyToUserId() == null ? null : users.get(reply.getReplyToUserId()),
-                reply.getCreatedAt()));
+        return page.map(
+                reply -> new ReplyVO(reply.getId(), reply.getRootId(), reply.getContent(), users.get(reply.getUserId()),
+                        reply.getReplyToUserId() == null ? null : users.get(reply.getReplyToUserId()),
+                        reply.getCreatedAt()));
     }
 
     @Override
@@ -158,37 +164,37 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
     }
 
     /**
-     * 用户是否是该评论或其下某条回复的作者。
+     * 校验指定用户是否参与了该根评论下的讨论（为根评论作者或某条历史回复的作者）。
      */
     private boolean inDiscussion(long articleId, long rootId, long userId) {
-        return lambdaQuery()
-                .eq(Comment::getArticleId, articleId)
+        return lambdaQuery().eq(Comment::getArticleId, articleId)
                 .and(w -> w.eq(Comment::getId, rootId).or().eq(Comment::getRootId, rootId))
                 .eq(Comment::getUserId, userId)
                 .exists();
     }
 
     /**
-     * @throws BizException 文章不存在、已删除或是草稿时 {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
+     * 校验文章存在且处于已发布状态。
+     *
+     * @throws BizException 若文章不存在、已删除或是草稿态抛出 {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
      */
     private Article requirePublished(long articleId) {
         return articleService.findPublished(articleId)
                 .orElseThrow(() -> new BizException(ArticleErrorCode.ARTICLE_NOT_FOUND));
     }
 
+    /**
+     * 构建将评论实体批量映射为视图对象 {@link CommentVO} 的转换函数，聚合用户信息与实时回复计数。
+     */
     private Function<Comment, CommentVO> commentVOMapper(List<Comment> comments) {
         List<Long> ids = comments.stream().map(Comment::getId).toList();
         Map<Long, Counts> counts = counterApi.get(CounterTarget.COMMENT, ids);
         Map<Long, UserBrief> authors = userApi.getBriefs(comments.stream().map(Comment::getUserId).toList());
         return comment -> {
             boolean deleted = comment.getDeleted() != 0;
-            return new CommentVO(
-                    comment.getId(),
-                    deleted ? DELETED_CONTENT : comment.getContent(),
-                    deleted,
+            return new CommentVO(comment.getId(), deleted ? DELETED_CONTENT : comment.getContent(), deleted,
                     deleted ? null : authors.get(comment.getUserId()),
-                    counts.get(comment.getId()).get(CounterMetric.COMMENT_REPLY),
-                    comment.getCreatedAt());
+                    counts.get(comment.getId()).get(CounterMetric.COMMENT_REPLY), comment.getCreatedAt());
         };
     }
 }

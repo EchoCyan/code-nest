@@ -8,19 +8,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 文章与标签的关联。
+ * 文章与标签关联服务接口。
  */
 public interface ArticleTagService extends IService<ArticleTag> {
 
     /**
-     * 一批文章各自打的标签 ID，按标签 ID 正序。
+     * 批量查询文章关联的标签 ID 列表，按标签 ID 升序排列。
      *
-     * @return 以文章 ID 为 key；没有标签的文章不出现在结果中
+     * @param articleIds 文章 ID 集合
+     * @return 文章 ID 与标签 ID 列表的映射；未绑定标签的文章不包含在结果中
      */
     Map<Long, List<Long>> listTagIds(Collection<Long> articleIds);
 
     /**
-     * 用给定标签整体替换文章原有的标签。
+     * 全量替换指定文章的标签关联关系。
+     *
+     * @param articleId 文章 ID
+     * @param tagIds    新标签 ID 列表
      */
     void replaceTags(long articleId, List<Long> tagIds);
 }

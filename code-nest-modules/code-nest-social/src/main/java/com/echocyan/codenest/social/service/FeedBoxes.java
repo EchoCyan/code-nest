@@ -18,36 +18,44 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * {@link FeedStore} 的发件箱与收件箱。
- *
- * <p>key 设计，都是 ZSet，member 与 score 都是文章 ID（{@code feed} 是 key 前缀）：
+ * Feed 动态流收件箱与发件箱存储管理组件。
+ * <p>
+ * 基于 Redis ZSet 实现，member 与 score 均为文章 ID：
  * <ul>
- *     <li>{@code feed:outbox:{authorId}}：作者的发件箱，最近发布的 {@value #OUTBOX_CAP} 篇文章，不设 TTL。</li>
- *     <li>{@code feed:inbox:{userId}}：读者的收件箱，推送来的普通作者的文章，至多 {@value #INBOX_CAP} 条，
- *     TTL 7 天、读取时续期。key 不存在说明读者 7 天没来过：推送时跳过，读取时从发件箱重建。</li>
+ *   <li><b>发件箱（Outbox）：</b>键为 {@code {prefix}:outbox:{authorId}}，维护作者最近发布的 {@value #OUTBOX_CAP} 篇文章，无 TTL。</li>
+ *   <li><b>收件箱（Inbox）：</b>键为 {@code {prefix}:inbox:{userId}}，维护推送给读者的普通作者文章，上限 {@value #INBOX_CAP} 篇，
+ *       TTL 为 7 天并在读取时自动续期；键不存在表示该读者超过 7 天未活跃，写扩散推送时跳过，读 Feed 时懒加载重建。</li>
  * </ul>
- * 另有 String {@code feed:outbox:ready}：发件箱全部重建完成的标记。
- * score 是 double，大于 2^53 的雪花 ID 转换时会舍入，相邻的 ID 可能得到相同的 score。score 相同的 member 按字典序排列，
- * 位数相同的 ID 字典序就是数值序，所以 ZSet 内的顺序仍与 ID 一致；按游标读取时，与游标 score 相同的那一组单独取出，
- * 在 Java 里按 ID 精确比较。
+ * 键 {@code {prefix}:outbox:ready} 标识发件箱全量初始化状态。<br>
+ * <b>雪花 ID 浮点精度保护：</b>Redis ZSet score 为双精度浮点数，超过 2^53 的雪花 ID 转换可能发生舍入。
+ * 相同 score 的 member 按字典序排序（定长数值的字典序等价于数值序）；按游标翻页时，对与游标 score 相同的一组文章在 Java 内存中做严格数值比较过滤。
  */
 class FeedBoxes {
 
+    /**
+     * 发件箱保留的最近文章容量上限。
+     */
     static final int OUTBOX_CAP = 100;
 
+    /**
+     * 收件箱保留的文章容量上限。
+     */
     static final int INBOX_CAP = 500;
 
+    /**
+     * 活跃用户收件箱存活时间。
+     */
     private static final Duration INBOX_TTL = Duration.ofDays(7);
 
     /**
-     * 只保留最新的 ARGV[1] 条：ZSet 按 score 升序，最旧的排在前面。各脚本的 ARGV[1] 都是上限。
+     * Lua 片段：按 score 升序裁剪 ZSet，仅保留最新的 ARGV[1] 条记录。
      */
     private static final String TRIM = """
             redis.call('ZREMRANGEBYRANK', KEYS[1], 0, -tonumber(ARGV[1]) - 1)
             """;
 
     /**
-     * 把发件箱 src 的全部文章并入 KEYS[1] 并裁剪；ZADD 不改变 KEYS[1] 的 TTL。
+     * Lua 片段：将源发件箱文章合并到目标 ZSet 并修剪容量。
      */
     private static final String MERGE = """
             local function merge(src)
@@ -66,7 +74,7 @@ class FeedBoxes {
             """;
 
     /**
-     * KEYS：ZSet；ARGV：上限、文章 ID。
+     * Lua 脚本：添加文章到 ZSet 并裁剪至上限。
      */
     private static final RedisScript<Long> ADD = RedisScript.of("""
             redis.call('ZADD', KEYS[1], ARGV[2], ARGV[2])
@@ -77,7 +85,7 @@ class FeedBoxes {
     private static final byte[] ADD_BYTES = ADD.getScriptAsString().getBytes(StandardCharsets.UTF_8);
 
     /**
-     * KEYS：收件箱；ARGV：上限、文章 ID。收件箱存在时才写入，不会造出没有 TTL 的收件箱。
+     * Lua 脚本：当收件箱存在时添加文章并修剪（未活跃用户跳过，避免创建无 TTL 的收件箱）。
      */
     private static final byte[] ADD_IF_PRESENT = ("""
             if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -89,7 +97,7 @@ class FeedBoxes {
             """).getBytes(StandardCharsets.UTF_8);
 
     /**
-     * KEYS：收件箱、发件箱；ARGV：上限。收件箱存在时才并入。
+     * Lua 脚本：当收件箱存在时将发件箱文章并入。
      */
     private static final RedisScript<Long> MERGE_IF_PRESENT = RedisScript.of(MERGE + """
             if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -99,11 +107,11 @@ class FeedBoxes {
             return 1
             """, Long.class);
 
-    private static final byte[] MERGE_IF_PRESENT_BYTES = MERGE_IF_PRESENT.getScriptAsString()
-            .getBytes(StandardCharsets.UTF_8);
+    private static final byte[] MERGE_IF_PRESENT_BYTES =
+            MERGE_IF_PRESENT.getScriptAsString().getBytes(StandardCharsets.UTF_8);
 
     /**
-     * KEYS：收件箱、各发件箱；ARGV：上限、TTL 秒数。发件箱都为空时收件箱仍不存在。
+     * Lua 脚本：将多个发件箱文章合并到收件箱并设置过期时间。
      */
     private static final RedisScript<Long> REBUILD = RedisScript.of(MERGE + """
             for i = 2, #KEYS do
@@ -114,7 +122,7 @@ class FeedBoxes {
             """, Long.class);
 
     /**
-     * KEYS：收件箱、发件箱。从收件箱中移除发件箱里的全部文章。
+     * Lua 脚本：从收件箱中移除发件箱里的全部文章。
      */
     private static final RedisScript<Long> REMOVE_ALL_OF = RedisScript.of("""
             local ids = redis.call('ZRANGE', KEYS[2], 0, -1)
@@ -146,36 +154,62 @@ class FeedBoxes {
         return keyPrefix + ":inbox:" + userId;
     }
 
+    /**
+     * 将单篇文章写入作者发件箱并裁剪至容量上限。
+     *
+     * @param authorId  作者用户 ID
+     * @param articleId 文章 ID
+     */
     void addToOutbox(long authorId, long articleId) {
         redis.execute(ADD, List.of(outboxKey(authorId)), String.valueOf(OUTBOX_CAP), String.valueOf(articleId));
     }
 
     /**
-     * 用 pipeline 把一批文章写入各自作者的发件箱。
+     * 使用 Pipeline 将一批文章批量写入各自作者的发件箱。
+     *
+     * @param articles 包含作者 ID 与文章 ID 的状态列表
      */
     void addToOutboxes(Collection<ArticleState> articles) {
         byte[] cap = bytes(String.valueOf(OUTBOX_CAP));
         redis.executePipelined((RedisCallback<Object>) connection -> {
-            articles.forEach(article -> connection.scriptingCommands().eval(ADD_BYTES, ReturnType.INTEGER, 1,
-                    bytes(outboxKey(article.authorId())), cap, bytes(String.valueOf(article.id()))));
+            articles.forEach(article -> connection.scriptingCommands()
+                    .eval(ADD_BYTES, ReturnType.INTEGER, 1, bytes(outboxKey(article.authorId())), cap,
+                            bytes(String.valueOf(article.id()))));
             return null;
         });
     }
 
+    /**
+     * 检查发件箱全量初始化就绪标记是否存在。
+     *
+     * @return 若已初始化完成返回 {@code true}，否则返回 {@code false}
+     */
     boolean outboxesReady() {
         return Boolean.TRUE.equals(redis.hasKey(outboxReadyKey));
     }
 
+    /**
+     * 写入发件箱全量初始化完成标记。
+     */
     void markOutboxesReady() {
         redis.opsForValue().set(outboxReadyKey, "1");
     }
 
+    /**
+     * 从指定作者的发件箱中移除单篇文章。
+     *
+     * @param authorId  作者用户 ID
+     * @param articleId 文章 ID
+     */
     void removeFromOutbox(long authorId, long articleId) {
         redis.opsForZSet().remove(outboxKey(authorId), String.valueOf(articleId));
     }
 
     /**
-     * 用 pipeline 把文章推送给一批读者，收件箱不存在的读者跳过。
+     * 使用 Pipeline 将文章批量推送到活跃粉丝的收件箱中（收件箱不存在的跳过）。
+     *
+     * @param userIds   粉丝用户 ID 集合
+     * @param articleId 文章 ID
      */
     void pushToInboxes(Collection<Long> userIds, long articleId) {
         byte[] id = bytes(String.valueOf(articleId));
@@ -188,34 +222,46 @@ class FeedBoxes {
     }
 
     /**
-     * 读者的收件箱存在时，把作者发件箱里的文章并入。
+     * 当读者收件箱存在时，将指定作者发件箱中的文章合并入其收件箱。
+     *
+     * @param userId   读者用户 ID
+     * @param authorId 作者用户 ID
      */
     void mergeOutboxIntoInbox(long userId, long authorId) {
         redis.execute(MERGE_IF_PRESENT, List.of(inboxKey(userId), outboxKey(authorId)), String.valueOf(INBOX_CAP));
     }
 
     /**
-     * 用 pipeline 把作者发件箱里的文章并入一批读者的收件箱，收件箱不存在的读者跳过。
+     * 使用 Pipeline 将作者发件箱文章批量合并入多个活跃读者的收件箱中。
+     *
+     * @param userIds  读者用户 ID 集合
+     * @param authorId 作者用户 ID
      */
     void mergeOutboxIntoInboxes(Collection<Long> userIds, long authorId) {
         byte[] outbox = bytes(outboxKey(authorId));
         byte[] cap = bytes(String.valueOf(INBOX_CAP));
         redis.executePipelined((RedisCallback<Object>) connection -> {
-            userIds.forEach(userId -> connection.scriptingCommands().eval(MERGE_IF_PRESENT_BYTES, ReturnType.INTEGER,
-                    2, bytes(inboxKey(userId)), outbox, cap));
+            userIds.forEach(userId -> connection.scriptingCommands()
+                    .eval(MERGE_IF_PRESENT_BYTES, ReturnType.INTEGER, 2, bytes(inboxKey(userId)), outbox, cap));
             return null;
         });
     }
 
     /**
-     * 从读者的收件箱中移除作者发件箱里的文章；更早的、已不在发件箱里的留在收件箱中。
+     * 从读者收件箱中移除指定作者发件箱中的全部文章。
+     *
+     * @param userId   读者用户 ID
+     * @param authorId 作者用户 ID
      */
     void removeOutboxFromInbox(long userId, long authorId) {
         redis.execute(REMOVE_ALL_OF, List.of(inboxKey(userId), outboxKey(authorId)));
     }
 
     /**
-     * 收件箱存在时续期；不存在时用这些作者的发件箱重建，只保留最新的 {@value #INBOX_CAP} 条。
+     * 读者收件箱存在时刷新过期时间；不存在时从关注的普通作者发件箱懒加载合并重建。
+     *
+     * @param userId    读者用户 ID
+     * @param authorIds 关注的普通作者 ID 集合
      */
     void renewOrRebuildInbox(long userId, Collection<Long> authorIds) {
         String inbox = inboxKey(userId);
@@ -228,10 +274,15 @@ class FeedBoxes {
     }
 
     /**
-     * 用 pipeline 读出收件箱与各作者发件箱中 ID 小于游标的文章，每个 ZSet 取最新的 limit 条。
+     * 使用 Pipeline 并行读取读者收件箱与关注大 V 发件箱中早于游标的文章 ID 列表。
+     * <p>
+     * 针对雪花 ID 转换为 double score 造成的浮点精度舍入，对相同 score 的文章区间取出后在 Java 内存做精确严格数值过滤。
      *
-     * @param cursor 为 null 时从最新的开始
-     * @return 各 ZSet 结果的合集，未排序、未去重
+     * @param userId    读者用户 ID
+     * @param authorIds 关注的大 V 作者 ID 集合
+     * @param cursor    游标文章 ID（为 {@code null} 时从最新文章开始）
+     * @param limit     各箱抓取的单箱上限数量
+     * @return 聚合后的文章 ID 列表（未排序、未去重）
      */
     List<Long> readBefore(long userId, Collection<Long> authorIds, Long cursor, int limit) {
         List<byte[]> keys = Stream.concat(Stream.of(inboxKey(userId)), authorIds.stream().map(this::outboxKey))

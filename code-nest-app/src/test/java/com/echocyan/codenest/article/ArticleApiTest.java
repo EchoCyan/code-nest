@@ -96,12 +96,15 @@ class ArticleApiTest extends ArticleTestSupport {
         RestTestClient author = withToken(register(uniqueUsername()));
         String id = createDraft(author, draft());
         // 先读一次草稿，发布后详情仍要立即反映新状态
-        author.get().uri(API + "/articles/{id}", id).exchange().expectStatus().isOk();
+        author.get().uri(API + "/articles/{id}", id)
+                .exchange()
+                .expectStatus().isOk();
 
         author.post().uri(API + "/articles/{id}/publish", id)
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.version").isEqualTo(1);
+                .expectBody()
+                .jsonPath("$.data.version").isEqualTo(1);
 
         client.get().uri(API + "/articles/{id}", id)
                 .exchange()
@@ -116,7 +119,9 @@ class ArticleApiTest extends ArticleTestSupport {
         RestTestClient author = withToken(register(uniqueUsername()));
         String id = publish(author, createDraft(author, draft()));
 
-        client.get().uri(API + "/articles/{id}", id).exchange().expectStatus().isOk();
+        client.get().uri(API + "/articles/{id}", id)
+                .exchange()
+                .expectStatus().isOk();
 
         author.get().uri(API + "/articles/{id}", id)
                 .exchange()
@@ -136,7 +141,9 @@ class ArticleApiTest extends ArticleTestSupport {
         String second = publish(author, createDraft(author, draft()));
         expectArticleCount(authorId, 2);
 
-        author.delete().uri(API + "/articles/{id}", second).exchange().expectStatus().isOk();
+        author.delete().uri(API + "/articles/{id}", second)
+                .exchange()
+                .expectStatus().isOk();
 
         expectArticleCount(authorId, 1);
     }
@@ -159,7 +166,8 @@ class ArticleApiTest extends ArticleTestSupport {
         withToken(register(uniqueUsername())).post().uri(API + "/articles/{id}/publish", id)
                 .exchange()
                 .expectStatus().isForbidden()
-                .expectBody().jsonPath("$.code").isEqualTo(90403);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90403);
     }
 
     @Test
@@ -172,11 +180,13 @@ class ArticleApiTest extends ArticleTestSupport {
         edited.remove("coverUrl");
         edited.put("content", "修订后的正文");
         // 先读一次旧内容，编辑后详情仍要立即是新内容
-        author.get().uri(API + "/articles/{id}", id).exchange().expectStatus().isOk();
+        author.get().uri(API + "/articles/{id}", id)
+                .exchange()
+                .expectStatus().isOk();
 
-        edit(author, id, 0, edited)
-                .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.version").isEqualTo(1);
+        edit(author, id, 0, edited).expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.data.version").isEqualTo(1);
 
         author.get().uri(API + "/articles/{id}", id)
                 .exchange()
@@ -194,25 +204,27 @@ class ArticleApiTest extends ArticleTestSupport {
         String id = createDraft(author, draft());
         edit(author, id, 0, draft()).expectStatus().isOk();
 
-        edit(author, id, 0, draft())
-                .expectStatus().isEqualTo(409)
-                .expectBody().jsonPath("$.code").isEqualTo(20002);
+        edit(author, id, 0, draft()).expectStatus().isEqualTo(409)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(20002);
     }
 
     @Test
     void onlyTheAuthorCanEdit() {
         String id = createDraft(withToken(register(uniqueUsername())), draft());
 
-        edit(withToken(register(uniqueUsername())), id, 0, draft())
-                .expectStatus().isForbidden()
-                .expectBody().jsonPath("$.code").isEqualTo(90403);
+        edit(withToken(register(uniqueUsername())), id, 0, draft()).expectStatus().isForbidden()
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90403);
     }
 
     @Test
     void deletedArticleIsNotFound() {
         RestTestClient author = withToken(register(uniqueUsername()));
         String id = publish(author, createDraft(author, draft()));
-        client.get().uri(API + "/articles/{id}", id).exchange().expectStatus().isOk();
+        client.get().uri(API + "/articles/{id}", id)
+                .exchange()
+                .expectStatus().isOk();
 
         author.delete().uri(API + "/articles/{id}", id)
                 .exchange()
@@ -226,17 +238,22 @@ class ArticleApiTest extends ArticleTestSupport {
     void authorNicknameFollowsProfileEdits() {
         RestTestClient author = withToken(register(uniqueUsername()));
         String id = publish(author, createDraft(author, draft()));
-        client.get().uri(API + "/articles/{id}", id).exchange().expectStatus().isOk();
-
-        author.put().uri(API + "/users/me")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("nickname", "改名后的作者"))
+        client.get().uri(API + "/articles/{id}", id)
                 .exchange()
                 .expectStatus().isOk();
 
+        author.put()
+                .uri(API + "/users/me")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("nickname", "改名后的作者"))
+                .exchange()
+                .expectStatus()
+                .isOk();
+
         client.get().uri(API + "/articles/{id}", id)
                 .exchange()
-                .expectBody().jsonPath("$.data.author.nickname").isEqualTo("改名后的作者");
+                .expectBody()
+                .jsonPath("$.data.author.nickname").isEqualTo("改名后的作者");
     }
 
     @Test
@@ -247,7 +264,8 @@ class ArticleApiTest extends ArticleTestSupport {
         withToken(register(uniqueUsername())).delete().uri(API + "/articles/{id}", id)
                 .exchange()
                 .expectStatus().isForbidden()
-                .expectBody().jsonPath("$.code").isEqualTo(90403);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90403);
         client.get().uri(API + "/articles/{id}", id)
                 .exchange()
                 .expectStatus().isOk();
@@ -264,15 +282,15 @@ class ArticleApiTest extends ArticleTestSupport {
         viewer.get().uri(API + "/articles/{id}", id)
                 .exchange()
                 .expectStatus().isNotFound()
-                .expectBody().jsonPath("$.code").isEqualTo(20001);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(20001);
     }
 
     private void expectBadRequest(RestTestClient author, Map<String, Object> body, int code) {
-        author.post().uri(API + "/articles")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
+        author.post().uri(API + "/articles").contentType(MediaType.APPLICATION_JSON).body(body)
                 .exchange()
                 .expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.code").isEqualTo(code);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(code);
     }
 }

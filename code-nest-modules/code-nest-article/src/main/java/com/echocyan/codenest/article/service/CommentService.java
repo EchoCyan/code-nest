@@ -10,47 +10,65 @@ import com.echocyan.codenest.common.exception.CommonErrorCode;
 import com.echocyan.codenest.common.result.CursorResult;
 
 /**
- * 评论与回复的发表、删除与列表。
+ * 评论与楼中楼回复服务接口。
  */
 public interface CommentService extends IService<Comment> {
 
     /**
-     * 对已发布的文章发表评论，文章评论数 +1，并发出 {@code comment.created}。
+     * 对已发布文章发表一级评论。
      *
-     * @throws BizException {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
+     * @param articleId 目标文章 ID
+     * @param userId    发表者用户 ID
+     * @param content   评论正文
+     * @return 新建的评论实体
+     * @throws BizException 若文章不存在、已删除或非已发布状态抛出 {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
      */
     Comment comment(long articleId, long userId, String content);
 
     /**
-     * 文章的评论，按时间倒序，每条带回复数。已删除的评论下面还有回复时保留位置、隐去内容，否则不返回。
+     * 基于游标分页查询文章下的一级评论列表，按 ID 降序排列。
      *
-     * @param cursor 上一页的 nextCursor，第一页为 null
-     * @throws BizException {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
+     * @param articleId 目标文章 ID
+     * @param cursor    游标偏移量（上一页最后一条记录 ID），首批传 {@code null}
+     * @param size      单页记录数
+     * @return 一级评论游标分页结果
+     * @throws BizException 若文章不存在、已删除或非已发布状态抛出 {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
      */
     CursorResult<CommentVO> listComments(long articleId, Long cursor, int size);
 
     /**
-     * 在评论下发表回复，评论回复数和文章评论数各 +1，并发出 {@code comment.created}。对回复再回复时，新回复仍挂在同一条评论下。
+     * 发表二级楼中楼回复。
      *
-     * @param commentId     被回复的评论或回复
-     * @param replyToUserId 回复 @某人；为 null 时，回复评论即回复评论本身，回复某条回复即 @ 该回复的作者
-     * @throws BizException {@link ArticleErrorCode#COMMENT_NOT_FOUND}、{@link ArticleErrorCode#ARTICLE_NOT_FOUND}、
-     *                      {@link ArticleErrorCode#REPLY_TO_USER_INVALID}
+     * @param commentId     被回复的目标评论或回复 ID
+     * @param userId        发表者用户 ID
+     * @param content       回复正文
+     * @param replyToUserId 被回复目标用户 ID，为空时自动推导
+     * @return 新建的回复实体
+     * @throws BizException 若目标记录不存在抛出 {@link ArticleErrorCode#COMMENT_NOT_FOUND}；
+     *                      若所属文章非已发布抛出 {@link ArticleErrorCode#ARTICLE_NOT_FOUND}；
+     *                      若被回复用户未参与讨论抛出 {@link ArticleErrorCode#REPLY_TO_USER_INVALID}
      */
     Comment reply(long commentId, long userId, String content, Long replyToUserId);
 
     /**
-     * 评论下的全部回复，平铺，按时间正序。评论已删除时，仍可查看保留下来的回复。
+     * 基于游标分页查询一级评论下的二级回复列表，按 ID 升序排列。
      *
-     * @param cursor 上一页的 nextCursor，第一页为 null
-     * @throws BizException {@link ArticleErrorCode#COMMENT_NOT_FOUND}、{@link ArticleErrorCode#ARTICLE_NOT_FOUND}
+     * @param commentId 根评论 ID
+     * @param cursor    游标偏移量（上一页最后一条记录 ID），首批传 {@code null}
+     * @param size      单页记录数
+     * @return 二级回复游标分页结果
+     * @throws BizException 若根评论不存在或其本身不是一级评论抛出 {@link ArticleErrorCode#COMMENT_NOT_FOUND}；
+     *                      若所属文章非已发布抛出 {@link ArticleErrorCode#ARTICLE_NOT_FOUND}
      */
     CursorResult<ReplyVO> listReplies(long commentId, Long cursor, int size);
 
     /**
-     * 软删除评论或回复。删除评论时文章评论数 -1，其下的回复保留；删除回复时评论回复数和文章评论数各 -1。
+     * 软删除评论或回复。
      *
-     * @throws BizException {@link ArticleErrorCode#COMMENT_NOT_FOUND}、{@link CommonErrorCode#FORBIDDEN}
+     * @param id     待删除的评论或回复 ID
+     * @param userId 当前操作人用户 ID
+     * @throws BizException 若记录不存在抛出 {@link ArticleErrorCode#COMMENT_NOT_FOUND}；
+     *                      若操作人非作者本人抛出 {@link CommonErrorCode#FORBIDDEN}
      */
     void delete(long id, long userId);
 }

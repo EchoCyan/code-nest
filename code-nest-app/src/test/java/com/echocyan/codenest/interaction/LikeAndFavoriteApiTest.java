@@ -47,13 +47,11 @@ class LikeAndFavoriteApiTest extends IntegrationTest {
 
         CountDownLatch start = new CountDownLatch(1);
         try (ExecutorService executor = Executors.newFixedThreadPool(requests.size())) {
-            List<Future<?>> futures = requests.stream()
-                    .<Future<?>>map(reader -> executor.submit(() -> {
-                        start.await();
-                        like(reader, articleId).expectStatus().isOk();
-                        return null;
-                    }))
-                    .toList();
+            List<Future<?>> futures = requests.stream().<Future<?>>map(reader -> executor.submit(() -> {
+                start.await();
+                like(reader, articleId).expectStatus().isOk();
+                return null;
+            })).toList();
             start.countDown();
             for (Future<?> future : futures) {
                 future.get();
@@ -119,7 +117,9 @@ class LikeAndFavoriteApiTest extends IntegrationTest {
         favorite(reader, kept).expectStatus().isOk();
         favorite(reader, deleted).expectStatus().isOk();
 
-        author.delete().uri(API + "/articles/{id}", deleted).exchange().expectStatus().isOk();
+        author.delete().uri(API + "/articles/{id}", deleted)
+                .exchange()
+                .expectStatus().isOk();
 
         reader.get().uri(API + "/users/me/favorites")
                 .exchange()
@@ -135,17 +135,22 @@ class LikeAndFavoriteApiTest extends IntegrationTest {
         String articleId = publishedArticle(author);
         RestTestClient reader = withToken(register(uniqueUsername()));
         favorite(reader, articleId).expectStatus().isOk();
-        reader.get().uri(API + "/users/me/favorites").exchange().expectStatus().isOk();
-
-        author.put().uri(API + "/articles/{id}?version=1", articleId)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("title", "点赞计数（修订）", "content", "热点行更新会排队等锁。", "categoryId", 1))
+        reader.get().uri(API + "/users/me/favorites")
                 .exchange()
                 .expectStatus().isOk();
 
+        author.put()
+                .uri(API + "/articles/{id}?version=1", articleId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("title", "点赞计数（修订）", "content", "热点行更新会排队等锁。", "categoryId", 1))
+                .exchange()
+                .expectStatus()
+                .isOk();
+
         reader.get().uri(API + "/users/me/favorites")
                 .exchange()
-                .expectBody().jsonPath("$.data.list[0].title").isEqualTo("点赞计数（修订）");
+                .expectBody()
+                .jsonPath("$.data.list[0].title").isEqualTo("点赞计数（修订）");
     }
 
     @Test
@@ -184,7 +189,8 @@ class LikeAndFavoriteApiTest extends IntegrationTest {
         reader.get().uri(API + "/articles/states?ids={ids}", fiftyOne)
                 .exchange()
                 .expectStatus().isBadRequest()
-                .expectBody().jsonPath("$.code").isEqualTo(90400);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(90400);
     }
 
     @Test
@@ -192,16 +198,21 @@ class LikeAndFavoriteApiTest extends IntegrationTest {
         RestTestClient author = withToken(register(uniqueUsername()));
         String draftId = draft(author);
         String deletedId = publishedArticle(author);
-        author.delete().uri(API + "/articles/{id}", deletedId).exchange().expectStatus().isOk();
+        author.delete().uri(API + "/articles/{id}", deletedId)
+                .exchange()
+                .expectStatus().isOk();
         RestTestClient reader = withToken(register(uniqueUsername()));
 
         for (String articleId : List.of(draftId, deletedId, "1")) {
             for (String action : List.of("like", "favorite")) {
-                reader.put().uri(API + "/articles/{id}/{action}", articleId, action).exchange()
+                reader.put().uri(API + "/articles/{id}/{action}", articleId, action)
+                        .exchange()
                         .expectStatus().isNotFound()
-                        .expectBody().jsonPath("$.code").isEqualTo(20001);
+                        .expectBody()
+                        .jsonPath("$.code").isEqualTo(20001);
                 // 取消不检查文章，没有这条关系时什么也不做
-                reader.delete().uri(API + "/articles/{id}/{action}", articleId, action).exchange()
+                reader.delete().uri(API + "/articles/{id}/{action}", articleId, action)
+                        .exchange()
                         .expectStatus().isOk();
             }
         }
@@ -216,36 +227,44 @@ class LikeAndFavoriteApiTest extends IntegrationTest {
         favorite(reader, articleId).expectStatus().isOk();
         expectLikes(articleId, 1);
         String authorId = authorIdOf(articleId);
-        author.delete().uri(API + "/articles/{id}", articleId).exchange().expectStatus().isOk();
+        author.delete().uri(API + "/articles/{id}", articleId)
+                .exchange()
+                .expectStatus().isOk();
 
         unlike(reader, articleId).expectStatus().isOk();
         unfavorite(reader, articleId).expectStatus().isOk();
 
         eventually(() -> client.get().uri(API + "/users/{id}", authorId)
                 .exchange()
-                .expectBody().jsonPath("$.data.counts.likeReceivedCount").isEqualTo(0));
+                .expectBody()
+                .jsonPath("$.data.counts.likeReceivedCount").isEqualTo(0));
     }
 
     private RestTestClient.ResponseSpec like(RestTestClient reader, String articleId) {
-        return reader.put().uri(API + "/articles/{id}/like", articleId).exchange();
+        return reader.put().uri(API + "/articles/{id}/like", articleId)
+                .exchange();
     }
 
     private RestTestClient.ResponseSpec unlike(RestTestClient reader, String articleId) {
-        return reader.delete().uri(API + "/articles/{id}/like", articleId).exchange();
+        return reader.delete().uri(API + "/articles/{id}/like", articleId)
+                .exchange();
     }
 
     private RestTestClient.ResponseSpec favorite(RestTestClient reader, String articleId) {
-        return reader.put().uri(API + "/articles/{id}/favorite", articleId).exchange();
+        return reader.put().uri(API + "/articles/{id}/favorite", articleId)
+                .exchange();
     }
 
     private RestTestClient.ResponseSpec unfavorite(RestTestClient reader, String articleId) {
-        return reader.delete().uri(API + "/articles/{id}/favorite", articleId).exchange();
+        return reader.delete().uri(API + "/articles/{id}/favorite", articleId)
+                .exchange();
     }
 
     private void expectFavorites(String articleId, int expected) {
         eventually(() -> client.get().uri(API + "/articles/{id}", articleId)
                 .exchange()
-                .expectBody().jsonPath("$.data.counts.favoriteCount").isEqualTo(expected));
+                .expectBody()
+                .jsonPath("$.data.counts.favoriteCount").isEqualTo(expected));
     }
 
     /**
@@ -261,32 +280,40 @@ class LikeAndFavoriteApiTest extends IntegrationTest {
                 .jsonPath("$.data.author.id").value(String.class, authorId::set));
         eventually(() -> client.get().uri(API + "/users/{id}", authorId.get())
                 .exchange()
-                .expectBody().jsonPath("$.data.counts.likeReceivedCount").isEqualTo(expected));
+                .expectBody()
+                .jsonPath("$.data.counts.likeReceivedCount").isEqualTo(expected));
     }
 
     private String authorIdOf(String articleId) {
         AtomicReference<String> authorId = new AtomicReference<>();
         client.get().uri(API + "/articles/{id}", articleId)
                 .exchange()
-                .expectBody().jsonPath("$.data.author.id").value(String.class, authorId::set);
+                .expectBody()
+                .jsonPath("$.data.author.id").value(String.class, authorId::set);
         return authorId.get();
     }
 
     private String publishedArticle(RestTestClient author) {
         String id = draft(author);
-        author.post().uri(API + "/articles/{id}/publish", id).exchange().expectStatus().isOk();
+        author.post().uri(API + "/articles/{id}/publish", id)
+                .exchange()
+                .expectStatus().isOk();
         return id;
     }
 
     private String draft(RestTestClient author) {
         AtomicReference<String> id = new AtomicReference<>();
-        author.post().uri(API + "/articles")
+        author.post()
+                .uri(API + "/articles")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("title", "点赞计数", "content", "热点行更新会排队等锁。", "categoryId", 1,
-                        "tagIds", List.of(1)))
+                .body(Map.of("title", "点赞计数", "content", "热点行更新会排队等锁。", "categoryId", 1, "tagIds",
+                        List.of(1)))
                 .exchange()
-                .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.id").value(String.class, id::set);
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.data.id")
+                .value(String.class, id::set);
         return id.get();
     }
 }

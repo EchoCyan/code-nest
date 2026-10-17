@@ -11,19 +11,26 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 滑动窗口日志限流：每个额度一个 ZSet，member 是请求 ID，score 是请求时间（毫秒）。
- * 时间取自 Redis {@code TIME}，多个应用实例之间的时钟偏差不影响判断。
+ * 基于 Redis ZSet 的分布式滑动窗口限流器。
+ *
+ * <p>通过 Lua 脚本原子执行：清理过期时间戳、统计窗口请求数；
+ * 未超限时原子写入并放行，任一超限则返回需等待的冷却毫秒数（All-or-Nothing）。</p>
  */
 @Component
 @RequiredArgsConstructor
 public class SlidingWindowRateLimiter {
 
+    /**
+     * 限流 Key 在 Redis 中的统一全局前缀。
+     */
     private static final String KEY_PREFIX = "rate-limit:";
 
     /**
-     * KEYS：各额度的 ZSet；ARGV：请求 ID，再依次为各额度的限额和窗口毫秒数。
-     * 先清掉所有额度窗口外的记录并计数，全部有余量才给每个额度记下本次请求；
-     * 否则什么都不记，返回最晚腾出名额的那个额度还要等待的毫秒数：通常就是等窗口中最早一条记录滑出。
+     * 多配额原子校验与记录 Lua 脚本。
+     *
+     * <p>KEYS 包含所有关联额度的 ZSet 键名；
+     * ARGV[1] 为本次请求唯一 UUID，随后依次成对传入各额度的 limit（阈值）和 window（窗口毫秒数）。
+     * 脚本返回值：0 表示所有配额均满足并已成功记录；正数表示被拒绝后至少需要等待的冷却毫秒数。
      */
     private static final RedisScript<Long> ACQUIRE = RedisScript.of("""
             local time = redis.call('TIME')
@@ -50,13 +57,20 @@ public class SlidingWindowRateLimiter {
             return 0
             """, Long.class);
 
+    /**
+     * Redis 字符串操作模板。
+     */
     private final StringRedisTemplate redis;
 
     /**
-     * 原子地检查一组额度：全部有余量时给每个额度记一次请求。
+     * 原子评估并尝试扣减一组限流配额。
      *
-     * @return 0 表示放行；否则为被拒绝后至少要等待的毫秒数
-     * @throws org.springframework.dao.DataAccessException Redis 不可用
+     * <p>当且仅当传入的所有配额均有余量时，才会将本次请求记录写入所有配额对应的 ZSet 中；
+     * 若任一配额超限，则放弃所有配额写入，并计算出需等待的冷却时长。
+     *
+     * @param quotas 待申请扣减的配额列表（不可为空）
+     * @return {@code 0} 表示成功放行并已扣减；大于 0 的数值表示因超限被拦截，该数值为至少需要等待的冷却毫秒数
+     * @throws org.springframework.dao.DataAccessException 若底层 Redis 连接断开或操作超时
      */
     public long tryAcquire(List<Quota> quotas) {
         List<String> keys = new ArrayList<>(quotas.size());
@@ -71,7 +85,11 @@ public class SlidingWindowRateLimiter {
     }
 
     /**
-     * 一个额度：{@code key} 在 {@code window} 内最多 {@code limit} 次请求。
+     * 单个滑动窗口限流配额定义 Record。
+     *
+     * @param key    配额在 Redis 中的后缀键标识（如 {@code article:publish:user:10001}）
+     * @param limit  滑动窗口内允许的最大请求上限
+     * @param window 滑动窗口时间跨度
      */
     public record Quota(String key, int limit, Duration window) {
     }

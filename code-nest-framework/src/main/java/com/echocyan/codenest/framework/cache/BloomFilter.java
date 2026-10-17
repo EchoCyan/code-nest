@@ -9,35 +9,34 @@ import java.util.List;
 import java.util.function.Function;
 
 /**
- * 以 ID 为元素的布隆过滤器，用 Redis 8 原生的 {@code BF.*} 命令，key 为 {@code bf:<name>}。
- * 由 {@link TwoLevelCaches#bloomFilter} 创建，交给 {@link TwoLevelCaches#createTwoLevel} 拦截一定不存在的 ID。
+ * 基于 Redis 原生布隆过滤器的存在性预检组件（防缓存穿透）。
  *
- * <p>使用方负责维护：对象创建时 {@link #add}，应用启动时 {@link #rebuildIfAbsent}。
- *
- * <p><b>导入完成标记：</b>全量导入完成后才写入 {@code bf:<name>:ready}。过滤器或标记任一不存在时，查询一律视为
- * "可能存在"，也就是不拦截，下次启动时重建。所以导入期间不会误判，导入中断后重启会重新导入；
- * 重复加入同一个 ID 无害，多个实例同时启动时各自导入一遍。{@link #add} 在过滤器不存在时按同样的参数新建，
- * 导入期间创建的对象不会漏掉；新建时同时删除标记，运行期间过滤器丢失也会退回"不拦截"，直到下次启动重建。
- *
- * <p><b>已知局限：</b>Redis 从较早的快照恢复时，过滤器与标记都在，但缺少快照之后创建的 ID，这些对象会被误判为不存在，
- * 需要手动删除标记后重启。
+ * <p>核心机制：
+ * <ul>
+ *   <li><b>Fail-Open：</b>未就绪（无 {@code ready} 标记）或键不存在时默认放行，防重建期误杀；</li>
+ *   <li><b>容量与误判：</b>默认容量 100 万，误判率 0.1%，超出后由 Redis 自动扩容；</li>
+ *   <li><b>使用约定：</b>新增数据调用 {@link #add(long)}，启动期通过 {@link #rebuildIfAbsent(Function)} 预热。</li>
+ * </ul>
+ * </p>
  */
 @Slf4j
 public class BloomFilter {
 
     /**
-     * 误判率。
+     * 预期误判率（0.1%），即允许千分之一的假阳性概率。
      */
     private static final String ERROR_RATE = "0.001";
 
     /**
-     * 预计容量，超出后 Redis 自动扩容。
+     * 初始预估容量（100 万条）。超出该容量后，Redis 8 会自动追加子过滤器进行无缝扩容。
      */
     private static final String CAPACITY = "1000000";
 
     /**
-     * KEYS：过滤器、导入完成标记；ARGV：误判率、容量、要加入的 ID。过滤器不存在时先删除标记，再按给定参数新建：
-     * 新建的过滤器缺少此前的 ID，要等下次启动时重新导入。
+     * 元素添加 Lua 脚本。
+     *
+     * <p>KEYS[1] 为过滤器键，KEYS[2] 为就绪标记键；ARGV[1] 为误判率，ARGV[2] 为初始容量，ARGV[3...] 为待加入的 ID 列表。
+     * 若过滤器不存在，会先清除旧的就绪标记，再以指定参数初始化（{@code BF.RESERVE}），确保运行期重建状态一致。
      */
     private static final RedisScript<Long> ADD = RedisScript.of("""
             if redis.call('EXISTS', KEYS[1]) == 0 then
@@ -49,7 +48,11 @@ public class BloomFilter {
             """, Long.class);
 
     /**
-     * KEYS：过滤器、导入完成标记；ARGV：ID。任一 key 不存在时视为可能存在。
+     * 元素存在性检查 Lua 脚本。
+     *
+     * <p>KEYS[1] 为过滤器键，KEYS[2] 为就绪标记键；ARGV[1] 为目标 ID。
+     * 若过滤器键或就绪标记键存在缺失（存在数 < 2），则安全返回 1（视作可能存在），不执行拦截；
+     * 否则执行 {@code BF.EXISTS} 进行精准判决。
      */
     private static final RedisScript<Long> MIGHT_CONTAIN = RedisScript.of("""
             if redis.call('EXISTS', KEYS[1], KEYS[2]) < 2 then
@@ -58,10 +61,27 @@ public class BloomFilter {
             return redis.call('BF.EXISTS', KEYS[1], ARGV[1])
             """, Long.class);
 
+    /**
+     * 布隆过滤器在 Redis 中的主键名（{@code bf:<name>}）。
+     */
     private final String key;
+
+    /**
+     * 全量数据导入就绪标记键名（{@code bf:<name>:ready}）。
+     */
     private final String readyKey;
+
+    /**
+     * Redis 字符串操作模板。
+     */
     private final StringRedisTemplate redis;
 
+    /**
+     * 构造布隆过滤器实例。
+     *
+     * @param name  过滤器业务名称（全局唯一，建议格式为 {@code <模块>:<实体>}）
+     * @param redis Redis 字符串客户端模板
+     */
     BloomFilter(String name, StringRedisTemplate redis) {
         this.key = "bf:" + name;
         this.readyKey = key + ":ready";
@@ -69,16 +89,25 @@ public class BloomFilter {
     }
 
     /**
-     * 加入一个 ID。在对象写库的事务里调用即可：事务回滚只会留下一个误判，不影响正确性。
+     * 向布隆过滤器中记录一个新生成的业务 ID。
+     *
+     * <p>通常在实体落库的本地数据库事务内直接调用。若事务随后回滚，仅会在过滤器中残留该 ID 的假阳性记录，
+     * 绝不影响业务数据的正确性与一致性。
+     *
+     * @param id 业务主键 ID
      */
     public void add(long id) {
         addAll(List.of(id));
     }
 
     /**
-     * 过滤器或导入完成标记不存在时，按 ID 游标分批导入全部 ID，完成后写入标记；两者都在时什么也不做。
+     * 当布隆过滤器或就绪标记不存在时，按游标分批全量导入数据并写入就绪标记；若已就绪则跳过。
      *
-     * @param idsAfter 返回大于给定 ID 的下一批 ID，按 ID 升序；参数为 null 时从头开始，返回空列表表示结束
+     * <p>多节点并发启动时各自执行导入具备幂等性；方法执行完毕后原子写入就绪标记，
+     * 标志该布隆过滤器正式生效进入拦截状态。
+     *
+     * @param idsAfter 游标批次数据提取函数。入参为上一批最后一条记录的 ID（首次遍历传入 {@code null}）；
+     *                 要求按 ID 升序提取下一批记录，返回空列表时表示遍历结束
      */
     public void rebuildIfAbsent(Function<Long, List<Long>> idsAfter) {
         if (redis.countExistingKeys(List.of(key, readyKey)) == 2) {
@@ -95,10 +124,21 @@ public class BloomFilter {
         log.info("Rebuilt bloom filter {} with {} ids", key, imported);
     }
 
+    /**
+     * 判断指定 ID 是否可能存在于集合中。
+     *
+     * @param id 待校验的业务主键 ID
+     * @return {@code true} 表示可能存在（或处于未就绪状态安全放行）；{@code false} 表示该 ID 一定不存在，可直接拦截
+     */
     boolean mightContain(long id) {
         return redis.execute(MIGHT_CONTAIN, List.of(key, readyKey), String.valueOf(id)) == 1;
     }
 
+    /**
+     * 批量向布隆过滤器追加 ID 列表。
+     *
+     * @param ids 待加入的 ID 集合
+     */
     private void addAll(List<Long> ids) {
         List<String> args = new ArrayList<>(List.of(ERROR_RATE, CAPACITY));
         ids.forEach(id -> args.add(String.valueOf(id)));

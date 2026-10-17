@@ -9,22 +9,38 @@ import java.util.Collection;
 import java.util.Set;
 
 /**
- * 点赞与取消点赞。两者都幂等，只有真的插入或删除了一行才更新文章点赞数和作者获赞数；点赞成功时还会发出 {@code like.created}。
+ * 文章点赞服务接口。
+ *
+ * <p>点赞与取消点赞均保证幂等；仅当实际插入或删除数据行时才增减文章点赞数与作者获赞数，
+ * 并在点赞成功时发出 {@link com.echocyan.codenest.interaction.api.event.LikeCreatedEvent}。
  */
 public interface ArticleLikeService extends IService<ArticleLike> {
 
     /**
-     * @throws BizException {@link ArticleErrorCode#ARTICLE_NOT_FOUND} 文章不存在、已删除或是草稿
+     * 对文章执行点赞。
+     *
+     * @param userId    点赞用户 ID
+     * @param articleId 目标文章 ID
+     * @throws BizException 若文章不存在、已删除或非已发布状态（{@link ArticleErrorCode#ARTICLE_NOT_FOUND}）
      */
     void like(long userId, long articleId);
 
     /**
-     * 不检查文章状态：文章删除后仍可取消，没有点过赞时什么也不做。
+     * 取消对文章的点赞。
+     *
+     * <p>不校验文章状态，文章删除后仍可取消；未点赞时静默忽略。
+     *
+     * @param userId    取消点赞的用户 ID
+     * @param articleId 目标文章 ID
      */
     void unlike(long userId, long articleId);
 
     /**
-     * 给定文章中用户点过赞的那些，走 (user_id, article_id) 唯一索引。
+     * 批量查询用户在给定文章集合中已点赞的文章 ID。
+     *
+     * @param userId     目标用户 ID
+     * @param articleIds 待检查的文章 ID 集合
+     * @return 该用户已点赞的文章 ID 集合
      */
     Set<Long> listLikedArticleIds(long userId, Collection<Long> articleIds);
 }

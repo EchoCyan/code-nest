@@ -22,7 +22,9 @@ import java.util.stream.LongStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -73,9 +75,8 @@ class ArticleIndexStartupTest extends IntegrationTest {
     @Test
     void importInterruptedAtStartupIsRedoneOnNextStartup() throws IOException {
         when(articleApi.listPublishedSnapshots(isNull(), anyInt())).thenReturn(snapshots(1, BATCH_SIZE));
-        when(articleApi.listPublishedSnapshots(eq((long) BATCH_SIZE), anyInt()))
-                .thenThrow(new IllegalStateException("数据库连接断开"))
-                .thenReturn(snapshots(BATCH_SIZE + 1, BATCH_SIZE + 3));
+        when(articleApi.listPublishedSnapshots(eq((long) BATCH_SIZE), anyInt())).thenThrow(
+                new IllegalStateException("数据库连接断开")).thenReturn(snapshots(BATCH_SIZE + 1, BATCH_SIZE + 3));
 
         assertThatThrownBy(() -> newIndex().afterSingletonsInstantiated()).isInstanceOf(IllegalStateException.class);
         newIndex().afterSingletonsInstantiated();
@@ -88,12 +89,11 @@ class ArticleIndexStartupTest extends IntegrationTest {
     void instancesStartingTogetherBothStart() throws IOException {
         when(articleApi.listPublishedSnapshots(isNull(), anyInt())).thenReturn(snapshots(1, 3));
         CountDownLatch start = new CountDownLatch(1);
-        List<CompletableFuture<Void>> startups = List.of(newIndex(), newIndex()).stream()
-                .map(index -> CompletableFuture.runAsync(() -> {
+        List<CompletableFuture<Void>> startups =
+                List.of(newIndex(), newIndex()).stream().map(index -> CompletableFuture.runAsync(() -> {
                     await(start);
                     index.afterSingletonsInstantiated();
-                }))
-                .toList();
+                })).toList();
 
         start.countDown();
 

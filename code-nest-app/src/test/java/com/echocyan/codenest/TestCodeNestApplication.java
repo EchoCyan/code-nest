@@ -9,8 +9,6 @@ import org.springframework.boot.SpringApplication;
 public class TestCodeNestApplication {
 
     public static void main(String[] args) {
-        SpringApplication.from(CodeNestApplication::main)
-                .with(TestcontainersConfiguration.class)
-                .run(args);
+        SpringApplication.from(CodeNestApplication::main).with(TestcontainersConfiguration.class).run(args);
     }
 }

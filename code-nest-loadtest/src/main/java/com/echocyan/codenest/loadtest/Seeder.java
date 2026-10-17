@@ -2,12 +2,22 @@ package com.echocyan.codenest.loadtest;
 
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Random;
+import java.util.Set;
 import java.util.function.IntPredicate;
 
 /**
@@ -69,8 +79,9 @@ public class Seeder {
 
     private static final double DRAFT_RATIO = 0.05;
 
-    private static final List<String> TABLES = List.of("user", "article", "article_content", "article_tag",
-            "follow", "article_like", "favorite", "comment");
+    private static final List<String> TABLES =
+            List.of("user", "article", "article_content", "article_tag", "follow", "article_like", "favorite",
+                    "comment");
 
     private final Connection connection;
     private final Random random = new Random(SEED);
@@ -189,8 +200,8 @@ public class Seeder {
                 + " published_at, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
              Batch contents = new Batch("INSERT INTO article_content (article_id, content, created_at, updated_at)"
                      + " VALUES (?, ?, ?, ?)");
-             Batch tags = new Batch("INSERT INTO article_tag (article_id, tag_id, created_at, updated_at)"
-                     + " VALUES (?, ?, ?, ?)")) {
+             Batch tags = new Batch(
+                     "INSERT INTO article_tag (article_id, tag_id, created_at, updated_at)" + " VALUES (?, ?, ?, ?)")) {
             for (int i = 0; i < ARTICLES; i++) {
                 LocalDateTime at = spread(from, to, i, ARTICLES);
                 boolean draft = random.nextDouble() < DRAFT_RATIO;
@@ -291,8 +302,8 @@ public class Seeder {
      * 每个用户收藏 0–10 篇别人的已发布文章。
      */
     private void seedFavorites() throws SQLException {
-        try (Batch favorites = new Batch("INSERT INTO favorite (id, user_id, article_id, created_at, updated_at)"
-                + " VALUES (?, ?, ?, ?, ?)")) {
+        try (Batch favorites = new Batch(
+                "INSERT INTO favorite (id, user_id, article_id, created_at, updated_at)" + " VALUES (?, ?, ?, ?, ?)")) {
             int row = 0;
             for (int user = 0; user < USERS; user++) {
                 for (int article : samplePublishedByOthers(user, random.nextInt(11))) {

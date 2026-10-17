@@ -5,17 +5,19 @@ import com.echocyan.codenest.user.api.UserBrief;
 import java.time.LocalDateTime;
 
 /**
- * 评论下的一条回复。
+ * 二级楼中楼回复视图对象。
  *
- * @param rootId  所属评论的 ID
- * @param author  回复者简要信息；用户不存在时为 null
- * @param replyTo 被回复人的简要信息；直接回复评论时为 null
+ * @param id        回复唯一 ID
+ * @param rootId    所属一级根评论 ID
+ * @param content   回复文本内容
+ * @param author    回复者用户信息；若用户已注销则为 {@code null}
+ * @param replyTo   被回复目标用户信息；若直接针对根评论回复则为 {@code null}
+ * @param createdAt 回复发表时间
  */
-public record ReplyVO(
-        Long id,
-        Long rootId,
-        String content,
-        UserBrief author,
-        UserBrief replyTo,
-        LocalDateTime createdAt) {
+public record ReplyVO(Long id,
+                      Long rootId,
+                      String content,
+                      UserBrief author,
+                      UserBrief replyTo,
+                      LocalDateTime createdAt) {
 }

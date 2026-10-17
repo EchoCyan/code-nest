@@ -14,34 +14,60 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 
 /**
- * 消费 {@value #QUEUE}：把点赞、评论（含回复）、关注事件转给 {@link NotificationService}，由它决定接收者与去重。
+ * 站内通知消息队列监听器。
+ * <p>
+ * 监听 {@value #QUEUE} 队列，消费点赞、评论（含二级回复）及关注等领域事件，转交 {@link NotificationService} 处理；
+ * 各事件处理方法通过 {@link IdempotentConsumer} 保障消费幂等性。
  */
 @Component
 @RabbitListener(queues = NotificationListener.QUEUE)
 @RequiredArgsConstructor
 public class NotificationListener {
 
+    /**
+     * 站内通知消费队列名称。
+     */
     static final String QUEUE = "notification.create";
 
     private final NotificationService notificationService;
 
+    /**
+     * 声明通知队列及其与领域事件交换机的绑定关系。
+     *
+     * @return 队列与绑定的声明集合
+     */
     @Bean
     static Declarables notificationQueue() {
         return EventQueues.declare(QUEUE, NotificationListener.class);
     }
 
+    /**
+     * 消费点赞创建事件。
+     *
+     * @param event 点赞创建事件
+     */
     @RabbitHandler
     @IdempotentConsumer
     public void onLike(LikeCreatedEvent event) {
         notificationService.notifyLike(event);
     }
 
+    /**
+     * 消费评论或回复创建事件。
+     *
+     * @param event 评论或回复创建事件
+     */
     @RabbitHandler
     @IdempotentConsumer
     public void onComment(CommentCreatedEvent event) {
         notificationService.notifyComment(event);
     }
 
+    /**
+     * 消费关注创建事件。
+     *
+     * @param event 关注创建事件
+     */
     @RabbitHandler
     @IdempotentConsumer
     public void onFollow(FollowCreatedEvent event) {

@@ -22,42 +22,62 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * 在已发布文章中按关键词检索：经 {@link ArticleIndex} 的别名查询，用 IK 分词，按相关度排序并高亮。由 {@link ArticleIndex}
- * 持有，读写因此总是经过同一个别名。调用方已校验翻页深度。
- *
- * <p>标题、摘要、正文的权重为 3、1.5、1，分词后的每个词都要出现在同一个字段里；关键词与文章的某个标签名完全一致
- * （不区分大小写）时额外加分。分类、标签只做筛选，不参与打分。高亮文本经 HTML 转义，命中词用 {@code <em>} 包裹，
- * 字段未命中时为 null。
+ * 文章检索执行器。
+ * <p>
+ * 封装 Elasticsearch 查询 DSL 构建与执行：
+ * <ul>
+ *     <li>多字段加权匹配：匹配 {@code title}（权重 3）、{@code summary}（权重 1.5）与 {@code content}（权重 1），分词词项需同时命中同字段（AND 算子）；</li>
+ *     <li>精准标签提权：搜索关键词与 {@code tags} 完全匹配时提升相关度评分；</li>
+ *     <li>布尔过滤：分类 ID 与标签 ID 作为 Filter 条件，不参与相关度评分计算并享用 Filter 缓存；</li>
+ *     <li>关键词高亮：标题全量高亮，正文采用 Plain 高亮器截取单一片段（约 100 字符）。</li>
+ * </ul>
  */
 class ArticleSearcher {
 
     /**
-     * 标签名命中时的加权。
+     * 关键词完全匹配标签名时的加权分值。
      */
     private static final float TAG_BOOST = 5;
 
     /**
-     * 正文高亮片段的长度（字符数）。
+     * 正文高亮片段的最大字符截取长度。
      */
     private static final int CONTENT_FRAGMENT_SIZE = 100;
 
     private final ElasticsearchClient client;
     private final String alias;
 
+    /**
+     * @param client Elasticsearch 客户端
+     * @param alias  检索路由的目标别名
+     */
     ArticleSearcher(ElasticsearchClient client, String alias) {
         this.client = client;
         this.alias = alias;
     }
 
+    /**
+     * 构建全文检索与加权打分子句。
+     *
+     * @param bool    Bool 查询构建器
+     * @param keyword 检索关键词
+     * @return 填充后的 Bool 查询构建器
+     */
     private static BoolQuery.Builder matching(BoolQuery.Builder bool, String keyword) {
-        return bool
-                .must(must -> must.multiMatch(match -> match
-                        .query(keyword)
+        return bool.must(must -> must.multiMatch(match -> match.query(keyword)
                         .fields(Fields.TITLE + "^3", Fields.SUMMARY + "^1.5", Fields.CONTENT)
                         .operator(Operator.And)))
                 .should(should -> should.term(term -> term.field(Fields.TAGS).value(keyword).boost(TAG_BOOST)));
     }
 
+    /**
+     * 构建分类与标签过滤子句。
+     *
+     * @param bool       Bool 查询构建器
+     * @param categoryId 分类 ID 过滤项，为 {@code null} 时忽略
+     * @param tagId      标签 ID 过滤项，为 {@code null} 时忽略
+     * @return 填充后的 Bool 查询构建器
+     */
     private static BoolQuery.Builder filtered(BoolQuery.Builder bool, Long categoryId, Long tagId) {
         if (categoryId != null) {
             bool.filter(filter -> filter.term(term -> term.field(Fields.CATEGORY_ID).value(categoryId)));
@@ -69,52 +89,73 @@ class ArticleSearcher {
     }
 
     /**
-     * 同分或同一时间发布时，依次按发布时间、ID 倒序，保证翻页稳定。
+     * 构建排序规则列表。
+     * <p>
+     * 相关度模式按得分降序；次级排序统一使用发布时间倒序与文章 ID 倒序，保证相同分值或时间下的分页稳定性。
+     *
+     * @param sort 业务排序策略
+     * @return ES 排序选项列表
      */
     private static List<SortOptions> sortOf(SearchSort sort) {
         List<SortOptions> options = new ArrayList<>();
         if (sort == SearchSort.RELEVANCE) {
             options.add(SortOptions.of(option -> option.score(score -> score.order(SortOrder.Desc))));
         }
-        options.add(SortOptions.of(option -> option.field(field -> field
-                .field(Fields.PUBLISHED_AT).order(SortOrder.Desc))));
+        options.add(SortOptions.of(
+                option -> option.field(field -> field.field(Fields.PUBLISHED_AT).order(SortOrder.Desc))));
         options.add(SortOptions.of(option -> option.field(field -> field.field(Fields.ID).order(SortOrder.Desc))));
         return options;
     }
 
+    /**
+     * 提取检索命中项中指定字段的高亮文本。
+     *
+     * @param hit   ES 检索命中条目
+     * @param field 目标高亮字段名
+     * @return 首个高亮片段文本；未命中高亮时返回 {@code null}
+     */
     private static String highlightOf(co.elastic.clients.elasticsearch.core.search.Hit<Void> hit, String field) {
         List<String> fragments = hit.highlight().get(field);
         return fragments == null || fragments.isEmpty() ? null : fragments.getFirst();
     }
 
     /**
-     * @param categoryId 为 null 时不按分类筛选
-     * @param tagId      为 null 时不按标签筛选
+     * 执行文章检索并组装高亮分页结果。
+     *
+     * @param keyword    检索关键词
+     * @param categoryId 分类 ID 筛选，为 {@code null} 时不筛选
+     * @param tagId      标签 ID 筛选，为 {@code null} 时不筛选
+     * @param sort       排序策略
+     * @param page       当前页码（从 1 开始）
+     * @param size       每页记录数
+     * @return 包含命中文章 ID 与高亮片段的分页结果
+     * @throws UncheckedIOException 当底层 Elasticsearch 通信发生 I/O 异常时
      */
     PageResult<Match> search(String keyword, Long categoryId, Long tagId, SearchSort sort, long page, long size) {
         SearchResponse<Void> response;
         try {
-            response = client.search(search -> search
-                    .index(alias)
+            response = client.search(search -> search.index(alias)
                     .from((int) ((page - 1) * size))
                     .size((int) size)
                     .source(source -> source.fetch(false))
                     .query(query -> query.bool(bool -> filtered(matching(bool, keyword), categoryId, tagId)))
                     .sort(sortOf(sort))
-                    .highlight(highlight -> highlight
-                            .preTags("<em>")
+                    .highlight(highlight -> highlight.preTags("<em>")
                             .postTags("</em>")
                             .encoder(HighlighterEncoder.Html)
                             .fields(NamedValue.of(Fields.TITLE, HighlightField.of(field -> field.numberOfFragments(0))))
-                            // plain 高亮器按字符数切片段；默认的 unified 按句切分，没有标点的长句会整句返回
-                            .fields(NamedValue.of(Fields.CONTENT, HighlightField.of(field -> field
-                                    .type(HighlighterType.Plain)
-                                    .fragmentSize(CONTENT_FRAGMENT_SIZE)
-                                    .numberOfFragments(1))))), Void.class);
+                            // plain 高亮器按字符数切片段；默认的 unified
+                            // 按句切分，没有标点的长句会整句返回
+                            .fields(NamedValue.of(Fields.CONTENT, HighlightField.of(
+                                    field -> field.type(HighlighterType.Plain)
+                                            .fragmentSize(CONTENT_FRAGMENT_SIZE)
+                                            .numberOfFragments(1))))), Void.class);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        List<Match> list = response.hits().hits().stream()
+        List<Match> list = response.hits()
+                .hits()
+                .stream()
                 .map(hit -> new Match(Long.parseLong(hit.id()), highlightOf(hit, Fields.TITLE),
                         highlightOf(hit, Fields.CONTENT)))
                 .toList();

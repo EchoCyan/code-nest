@@ -17,11 +17,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 计数先在 Redis 里原子累加，再异步批量落回 MySQL，热点对象不用排队等同一行的行锁。
+ * 计数服务实现类。
  *
- * <p>精确计数经 {@link CounterChangedEvent} 随调用方的业务事务走 Outbox，由 {@link CounterChangedListener}
- * 去重后累加，所以读到的计数稍有延迟。一个事务里的多次变更在提交前合并成一个事件，只写一行 Outbox、发一条消息。
- * 浏览量是近似计数，在请求内直接累加，不走 MQ。
+ * <p>基于 Redis 内存原子更新与 MySQL 异步批量落库解耦写入路径，消除热点对象行锁争用：
+ * <ul>
+ *   <li>精确计数：在活动事务中暂存变更，通过事务同步器于 {@code beforeCommit} 阶段合并为
+ *       {@link CounterChangedEvent} 写入 Outbox，随业务事务一体化提交后异步处理。</li>
+ *   <li>近似计数（浏览量）：直接写入 Redis 并标记待落库，不经过 MQ。</li>
+ *   <li>对账纠偏：遵循“先写 Redis 再写 MySQL”的顺序，规避并发落库覆盖新值的风险。</li>
+ * </ul>
  */
 @Service
 @RequiredArgsConstructor
@@ -44,8 +48,9 @@ class RedisAsyncCounterService implements CounterApi {
     }
 
     /**
-     * 当前事务的待发布变更。查找的是当前事务的同步回调而不是线程绑定的资源，
-     * 内层的 REQUIRES_NEW 事务有自己的一份，随它自己提交。
+     * 获取或创建绑定至当前事务生命周期的变更同步器。
+     *
+     * @return 当前事务专用的 {@link PendingChanges} 同步器实例
      */
     private PendingChanges pendingChanges() {
         for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
@@ -63,10 +68,6 @@ class RedisAsyncCounterService implements CounterApi {
         return redisCounterStore.get(target, targetIds);
     }
 
-    /**
-     * 先改 Redis 再改 MySQL：反过来的话，两步之间落库会把 Redis 里的旧值写回 MySQL。与并发写入交错时可能有 ±1 的误差，
-     * 由下一次对账修正。
-     */
     @Override
     public void reset(CounterMetric metric, long targetId, long value) {
         if (value < 0) {
@@ -77,8 +78,7 @@ class RedisAsyncCounterService implements CounterApi {
     }
 
     /**
-     * 一个事务里累积的计数变更，同一对象同一指标的变更先合并。提交前（beforeCommit）在事务内发布，
-     * Outbox 记录与业务数据一起提交；事务回滚时不会调用 beforeCommit，变更随之丢弃。
+     * 事务生命周期同步回调实现，负责聚合事务内的计数变更并在提交前统一发布。
      */
     private static final class PendingChanges implements TransactionSynchronization {
 
@@ -89,13 +89,17 @@ class RedisAsyncCounterService implements CounterApi {
             this.owner = owner;
         }
 
+        /**
+         * 累加单项计数变更增量。
+         */
         void add(CounterMetric metric, long targetId, long delta) {
             deltas.merge(new CounterKey(metric, targetId), delta, Long::sum);
         }
 
         @Override
         public void beforeCommit(boolean readOnly) {
-            List<CounterChangedEvent.Change> changes = deltas.entrySet().stream()
+            List<CounterChangedEvent.Change> changes = deltas.entrySet()
+                    .stream()
                     .filter(entry -> entry.getValue() != 0)
                     .map(entry -> new CounterChangedEvent.Change(entry.getKey().metric(), entry.getKey().targetId(),
                             entry.getValue()))
@@ -107,6 +111,12 @@ class RedisAsyncCounterService implements CounterApi {
         }
     }
 
+    /**
+     * 计数变更聚合哈希键。
+     *
+     * @param metric   计数指标
+     * @param targetId 目标对象 ID
+     */
     private record CounterKey(CounterMetric metric, long targetId) {
     }
 }

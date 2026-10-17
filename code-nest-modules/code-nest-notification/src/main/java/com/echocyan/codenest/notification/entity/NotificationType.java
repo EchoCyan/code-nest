@@ -3,27 +3,35 @@ package com.echocyan.codenest.notification.entity;
 import com.baomidou.mybatisplus.annotation.EnumValue;
 
 /**
- * 通知类型。数据库存 {@link #code}，JSON 输出枚举名。
+ * 通知类型枚举。
+ * <p>
+ * 数据库持久化存储数值代码（{@link #code}），API 接口序列化输出枚举名称。
  */
 public enum NotificationType {
 
     /**
-     * 文章被点赞，关联文章。
+     * 文章被点赞通知（关联文章）。
      */
     LIKE(1),
+
     /**
-     * 文章被评论，关联文章与评论。
+     * 文章被评论通知（关联文章与评论）。
      */
     COMMENT(2),
+
     /**
-     * 自己被回复，关联文章与回复。
+     * 评论被回复通知（关联文章与回复）。
      */
     REPLY(3),
+
     /**
-     * 自己被关注，不关联内容。
+     * 用户被关注通知（仅关联动作触发者）。
      */
     FOLLOW(4);
 
+    /**
+     * 数据库存储代码。
+     */
     @EnumValue
     private final int code;
 

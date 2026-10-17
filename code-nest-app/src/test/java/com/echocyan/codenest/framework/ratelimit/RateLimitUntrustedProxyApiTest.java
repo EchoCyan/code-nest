@@ -8,10 +8,7 @@ import org.springframework.test.web.servlet.client.RestTestClient;
 /**
  * 没有配置可信代理：所有请求都按本机 IP 限流。本上下文只有这一个测试会用本机 IP 的额度。
  */
-@TestPropertySource(properties = {
-        "rate-limit.enabled=true",
-        "rate-limit.rules.search-per-minute.limit=3",
-})
+@TestPropertySource(properties = {"rate-limit.enabled=true", "rate-limit.rules.search-per-minute.limit=3",})
 class RateLimitUntrustedProxyApiTest extends IntegrationTest {
 
     @Test
@@ -24,8 +21,7 @@ class RateLimitUntrustedProxyApiTest extends IntegrationTest {
     }
 
     private RestTestClient.ResponseSpec search(String forgedIp) {
-        return client.get().uri(API + "/search/articles?q=redis")
-                .header("X-Forwarded-For", forgedIp)
+        return client.get().uri(API + "/search/articles?q=redis").header("X-Forwarded-For", forgedIp)
                 .exchange();
     }
 }

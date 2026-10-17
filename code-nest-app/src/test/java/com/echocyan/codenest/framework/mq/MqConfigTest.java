@@ -28,11 +28,11 @@ class MqConfigTest {
 
     @Test
     void rejectsDefaultSettingsListingWhatIsMissing() {
-        assertThatThrownBy(() -> MqConfig.requireReliabilitySettings(new RabbitProperties()))
-                .isInstanceOf(IllegalStateException.class)
+        assertThatThrownBy(() -> MqConfig.requireReliabilitySettings(new RabbitProperties())).isInstanceOf(
+                        IllegalStateException.class)
                 .hasMessageContaining("publisher-confirm-type")
                 .hasMessageContaining("publisher-returns")
                 .hasMessageContaining("template.mandatory")
-                .hasMessageContaining("listener.simple.retry.enabled");
+                .hasMessageContaining("listener.simple" + ".retry" + ".enabled");
     }
 }

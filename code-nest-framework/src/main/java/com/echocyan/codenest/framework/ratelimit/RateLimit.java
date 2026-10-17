@@ -1,12 +1,17 @@
 package com.echocyan.codenest.framework.ratelimit;
 
-import java.lang.annotation.*;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Repeatable;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 /**
- * 对 Controller 方法按滑动窗口限流，超限时返回 429 和 {@code Retry-After}。
- * <p>
- * 规则（限额、窗口、维度）在配置 {@code rate-limit.rules.<规则名>} 下，注解只写规则名；不同方法写同一个规则名时共用额度。
- * 可以重复标注，同时限制短期和长期频率；一次请求要所有额度都有余量才放行，被拒绝的请求不占用任何额度。
+ * Controller 方法级滑动窗口限流注解。
+ *
+ * <p>通过 {@link #value()} 关联配置文件中的 {@code rate-limit.rules.<name>} 规则。
+ * 支持重复标注以实现多周期复合限流，超限时抛出 {@link RateLimitedException}。</p>
  */
 @Documented
 @Target(ElementType.METHOD)
@@ -15,22 +20,33 @@ import java.lang.annotation.*;
 public @interface RateLimit {
 
     /**
-     * 规则名，必须在 {@code rate-limit.rules} 下配置。
+     * 限流规则配置名称。
+     *
+     * <p>必须在配置文件中的 {@code rate-limit.rules} 节点下显式定义。
+     * 若应用启动时发现引用的规则名未配置或属性缺失，将触发强校验阻断服务启动。
+     *
+     * @return 规则名标识
      */
     String value();
 
     /**
-     * 按谁计数。
+     * 限流统计的主体维度枚举。
      */
     enum Dimension {
 
         /**
-         * 当前登录用户，只能用于需要登录的接口。
+         * 按当前登录用户 ID 统计限额。
+         *
+         * <p>仅适用于受保护的登录接口；禁止用于标有 {@link cn.dev33.satoken.annotation.SaIgnore} 的匿名公开接口
+         * （启动时会有强校验拦截）。
          */
         USER,
 
         /**
-         * 客户端 IP，只在请求来自可信代理时才读取 {@code X-Forwarded-For}。
+         * 按客户端公网 IP 地址统计限额。
+         *
+         * <p>专用于注册、登录或匿名公开接口的防刷与防爆破拦截。
+         * 仅在请求直接来源自可信代理（{@code trusted-proxies}）时，才会逆向解析 {@code X-Forwarded-For} 请求头提取真实客户端 IP。
          */
         IP
     }

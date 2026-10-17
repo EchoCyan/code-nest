@@ -132,8 +132,7 @@ class DomainEventPublisherTest extends IntegrationTest {
 
     @Test
     void rejectsEventClassWithoutDomainEventAnnotation() {
-        assertThatThrownBy(() -> publisher.publish(new Undeclared("x")))
-                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> publisher.publish(new Undeclared("x"))).isInstanceOf(IllegalArgumentException.class);
     }
 
     /**
@@ -143,8 +142,8 @@ class DomainEventPublisherTest extends IntegrationTest {
     void unroutableEventIsNotConfirmed() throws Exception {
         String payload = "{\"nonce\":\"" + nonce() + "\"}";
 
-        assertThat(sender.send(nonce(), "probe.unbound", Unbound.class.getName(), payload).get(5, TimeUnit.SECONDS))
-                .isFalse();
+        assertThat(sender.send(nonce(), "probe.unbound", Unbound.class.getName(), payload)
+                .get(5, TimeUnit.SECONDS)).isFalse();
     }
 
     private int statusOf(String nonce) {
@@ -168,8 +167,8 @@ class DomainEventPublisherTest extends IntegrationTest {
                 continue;
             }
             String body = new String(message.getBody(), StandardCharsets.UTF_8);
-            assertThat(forbiddenNonce == null || !body.contains(forbiddenNonce))
-                    .as("received rolled back event %s", forbiddenNonce).isTrue();
+            assertThat(forbiddenNonce == null || !body.contains(forbiddenNonce)).as("received rolled back event %s",
+                    forbiddenNonce).isTrue();
             if (body.contains(nonce)) {
                 return message;
             }

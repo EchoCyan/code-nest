@@ -19,10 +19,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class RateLimitRulesTest {
 
-    private static final Map<String, RuleProperties> CONFIGURED = Map.of(
-            "comment-per-minute", new RuleProperties(5, Duration.ofMinutes(1), Dimension.USER),
-            "comment-per-day", new RuleProperties(100, Duration.ofDays(1), Dimension.USER),
-            "search-per-minute", new RuleProperties(60, Duration.ofMinutes(1), Dimension.IP));
+    private static final Map<String, RuleProperties> CONFIGURED =
+            Map.of("comment-per-minute", new RuleProperties(5, Duration.ofMinutes(1), Dimension.USER),
+                    "comment-per-day", new RuleProperties(100, Duration.ofDays(1), Dimension.USER), "search-per-minute",
+                    new RuleProperties(60, Duration.ofMinutes(1), Dimension.IP));
 
     private static Method method(Class<?> type, String name) {
         return Stream.of(type.getDeclaredMethods())
@@ -43,27 +43,24 @@ class RateLimitRulesTest {
         assertThat(rules.of(method(Endpoints.class, "comment"))).containsExactly(perMinute,
                 new Rule("comment-per-day", 100, Duration.ofDays(1), Dimension.USER));
         assertThat(rules.of(method(Endpoints.class, "reply"))).containsExactly(perMinute);
-        assertThat(rules.of(method(Endpoints.class, "search")))
-                .containsExactly(new Rule("search-per-minute", 60, Duration.ofMinutes(1), Dimension.IP));
+        assertThat(rules.of(method(Endpoints.class, "search"))).containsExactly(
+                new Rule("search-per-minute", 60, Duration.ofMinutes(1), Dimension.IP));
         assertThat(rules.of(method(Endpoints.class, "unlimited"))).isEmpty();
     }
 
     @Test
     void unconfiguredRuleNameIsRejected() {
-        assertThatThrownBy(() -> rulesOf(Endpoints.class, "unconfigured"))
-                .isInstanceOf(IllegalStateException.class)
+        assertThatThrownBy(() -> rulesOf(Endpoints.class, "unconfigured")).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("follow-per-minute")
                 .hasMessageContaining("unconfigured");
     }
 
     @Test
     void perUserRuleOnAnonymousEndpointIsRejected() {
-        assertThatThrownBy(() -> rulesOf(Endpoints.class, "anonymousComment"))
-                .isInstanceOf(IllegalStateException.class)
+        assertThatThrownBy(() -> rulesOf(Endpoints.class, "anonymousComment")).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("comment-per-minute")
                 .hasMessageContaining("anonymousComment");
-        assertThatThrownBy(() -> rulesOf(AnonymousEndpoints.class, "comment"))
-                .isInstanceOf(IllegalStateException.class)
+        assertThatThrownBy(() -> rulesOf(AnonymousEndpoints.class, "comment")).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("comment-per-minute");
     }
 

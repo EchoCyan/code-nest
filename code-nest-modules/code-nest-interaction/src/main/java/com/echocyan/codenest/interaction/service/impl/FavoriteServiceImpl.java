@@ -24,10 +24,16 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * 文章收藏服务实现类。
+ *
+ * <p>基于关系表唯一键保障收藏与取消收藏的幂等性；联动 {@link CounterApi} 更新收藏数指标，
+ * 并实现 {@link CounterSource} 供计数对账系统重新统计。
+ */
 @Service
 @RequiredArgsConstructor
-public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite> implements FavoriteService,
-        CounterSource {
+public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite>
+        implements FavoriteService, CounterSource {
 
     private final PublishedArticles publishedArticles;
     private final ArticleApi articleApi;
@@ -43,7 +49,7 @@ public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite> i
         try {
             save(favorite);
         } catch (DuplicateKeyException e) {
-            // 已收藏过（包括并发的重复请求），不产生变化；MySQL 只回滚这一条语句，事务可以继续
+            // 已收藏（含并发重复请求）幂等忽略；单条语句回滚不影响外层事务继续执行
             return;
         }
         counterApi.increment(CounterMetric.ARTICLE_FAVORITE, articleId, 1);
@@ -52,10 +58,7 @@ public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite> i
     @Override
     @Transactional
     public void unfavorite(long userId, long articleId) {
-        boolean removed = lambdaUpdate()
-                .eq(Favorite::getUserId, userId)
-                .eq(Favorite::getArticleId, articleId)
-                .remove();
+        boolean removed = lambdaUpdate().eq(Favorite::getUserId, userId).eq(Favorite::getArticleId, articleId).remove();
         if (removed) {
             counterApi.increment(CounterMetric.ARTICLE_FAVORITE, articleId, -1);
         }
@@ -63,8 +66,7 @@ public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite> i
 
     @Override
     public CursorResult<FavoriteVO> listMine(long userId, Long cursor, int size) {
-        CursorResult<Favorite> page = CursorResult.ofOverfetched(lambdaQuery()
-                .eq(Favorite::getUserId, userId)
+        CursorResult<Favorite> page = CursorResult.ofOverfetched(lambdaQuery().eq(Favorite::getUserId, userId)
                 .lt(cursor != null, Favorite::getId, cursor)
                 .orderByDesc(Favorite::getId)
                 .last("LIMIT " + (size + 1))
@@ -72,10 +74,12 @@ public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite> i
         if (page.list().isEmpty()) {
             return CursorResult.empty();
         }
-        Map<Long, ArticleItem> items = articleApi.listPublishedItems(
-                        page.list().stream().map(Favorite::getArticleId).toList()).stream()
-                .collect(Collectors.toMap(ArticleItem::id, Function.identity()));
-        List<FavoriteVO> list = page.list().stream()
+        Map<Long, ArticleItem> items =
+                articleApi.listPublishedItems(page.list().stream().map(Favorite::getArticleId).toList())
+                        .stream()
+                        .collect(Collectors.toMap(ArticleItem::id, Function.identity()));
+        List<FavoriteVO> list = page.list()
+                .stream()
                 .filter(favorite -> items.containsKey(favorite.getArticleId()))
                 .map(favorite -> new FavoriteVO(items.get(favorite.getArticleId()), favorite.getCreatedAt()))
                 .toList();
@@ -97,11 +101,11 @@ public class FavoriteServiceImpl extends ServiceImpl<FavoriteMapper, Favorite> i
         if (articleIds.isEmpty()) {
             return Set.of();
         }
-        return lambdaQuery()
-                .select(Favorite::getArticleId)
+        return lambdaQuery().select(Favorite::getArticleId)
                 .eq(Favorite::getUserId, userId)
                 .in(Favorite::getArticleId, articleIds)
-                .list().stream()
+                .list()
+                .stream()
                 .map(Favorite::getArticleId)
                 .collect(Collectors.toSet());
     }

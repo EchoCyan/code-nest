@@ -50,7 +50,9 @@ class NotificationApiTest extends IntegrationTest {
         RestTestClient reader = withToken(register(uniqueUsername()));
         like(author, articleId);
         like(reader, articleId);
-        reader.delete().uri(API + "/articles/{id}/like", articleId).exchange().expectStatus().isOk();
+        reader.delete().uri(API + "/articles/{id}/like", articleId)
+                .exchange()
+                .expectStatus().isOk();
         like(reader, articleId);
         // 消费者按顺序处理，等到最后这条出现，前面的消息都已处理完
         RestTestClient last = withToken(register(uniqueUsername()));
@@ -107,7 +109,9 @@ class NotificationApiTest extends IntegrationTest {
         String authorId = idOf(author);
         RestTestClient fan = withToken(register(uniqueUsername()));
         follow(fan, authorId).expectStatus().isOk();
-        fan.delete().uri(API + "/users/{id}/follow", authorId).exchange().expectStatus().isOk();
+        fan.delete().uri(API + "/users/{id}/follow", authorId)
+                .exchange()
+                .expectStatus().isOk();
         follow(fan, authorId).expectStatus().isOk();
         RestTestClient last = withToken(register(uniqueUsername()));
         follow(last, authorId).expectStatus().isOk();
@@ -131,9 +135,11 @@ class NotificationApiTest extends IntegrationTest {
             comment(reader, articleId, "第 " + i + " 条");
         }
 
-        await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> author.get().uri(API + "/notifications?size=1")
-                .exchange()
-                .expectBody().jsonPath("$.data.list[0].commentSummary").isEqualTo("第 100 条"));
+        await().atMost(Duration.ofSeconds(30))
+                .untilAsserted(() -> author.get().uri(API + "/notifications?size=1")
+                        .exchange()
+                        .expectBody()
+                        .jsonPath("$.data.list[0].commentSummary").isEqualTo("第 100 条"));
         expectUnread(author, 100);
     }
 
@@ -150,20 +156,27 @@ class NotificationApiTest extends IntegrationTest {
         AtomicReference<String> older = new AtomicReference<>();
         author.get().uri(API + "/notifications")
                 .exchange()
-                .expectBody().jsonPath("$.data.list[1].id").value(String.class, older::set);
+                .expectBody()
+                .jsonPath("$.data.list[1].id").value(String.class, older::set);
         reader.put().uri(API + "/notifications/{id}/read", older.get())
                 .exchange()
                 .expectStatus().isNotFound()
-                .expectBody().jsonPath("$.code").isEqualTo(50001);
+                .expectBody()
+                .jsonPath("$.code").isEqualTo(50001);
         for (int i = 0; i < 2; i++) {
-            author.put().uri(API + "/notifications/{id}/read", older.get()).exchange().expectStatus().isOk();
+            author.put().uri(API + "/notifications/{id}/read", older.get())
+                    .exchange()
+                    .expectStatus().isOk();
         }
         expectUnread(author, 1);
         author.get().uri(API + "/notifications")
                 .exchange()
-                .expectBody().jsonPath("$.data.list[*].read").isEqualTo(List.of(false, true));
+                .expectBody()
+                .jsonPath("$.data.list[*].read").isEqualTo(List.of(false, true));
 
-        author.put().uri(API + "/notifications/read-all").exchange().expectStatus().isOk();
+        author.put().uri(API + "/notifications/read-all")
+                .exchange()
+                .expectStatus().isOk();
         expectUnread(author, 0);
     }
 
@@ -177,8 +190,12 @@ class NotificationApiTest extends IntegrationTest {
         like(reader, deleted);
         awaitNotifications(author, 2);
 
-        reader.delete().uri(API + "/comments/{id}", commentId).exchange().expectStatus().isOk();
-        author.delete().uri(API + "/articles/{id}", deleted).exchange().expectStatus().isOk();
+        reader.delete().uri(API + "/comments/{id}", commentId)
+                .exchange()
+                .expectStatus().isOk();
+        author.delete().uri(API + "/articles/{id}", deleted)
+                .exchange()
+                .expectStatus().isOk();
 
         author.get().uri(API + "/notifications")
                 .exchange()
@@ -193,54 +210,68 @@ class NotificationApiTest extends IntegrationTest {
      * 等到通知列表里恰好有 expected 条。
      */
     private void awaitNotifications(RestTestClient recipient, int expected) {
-        await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> recipient.get().uri(API + "/notifications")
-                .exchange()
-                .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.list.length()").isEqualTo(expected));
+        await().atMost(Duration.ofSeconds(10))
+                .untilAsserted(() -> recipient.get().uri(API + "/notifications")
+                        .exchange()
+                        .expectStatus().isOk()
+                        .expectBody()
+                        .jsonPath("$.data.list.length()").isEqualTo(expected));
     }
 
     private void expectUnread(RestTestClient recipient, int expected) {
         recipient.get().uri(API + "/notifications/unread-count")
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data").isEqualTo(expected);
+                .expectBody()
+                .jsonPath("$.data").isEqualTo(expected);
     }
 
     private String comment(RestTestClient user, String articleId, String content) {
         AtomicReference<String> id = new AtomicReference<>();
-        user.post().uri(API + "/articles/{id}/comments", articleId)
+        user.post()
+                .uri(API + "/articles/{id}/comments", articleId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("content", content))
                 .exchange()
-                .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.id").value(String.class, id::set);
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.data.id")
+                .value(String.class, id::set);
         return id.get();
     }
 
     private String reply(RestTestClient user, String commentId, Map<String, String> body) {
         AtomicReference<String> id = new AtomicReference<>();
-        user.post().uri(API + "/comments/{id}/replies", commentId)
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
+        user.post().uri(API + "/comments/{id}/replies", commentId).contentType(MediaType.APPLICATION_JSON).body(body)
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.id").value(String.class, id::set);
+                .expectBody()
+                .jsonPath("$.data.id").value(String.class, id::set);
         return id.get();
     }
 
     private void like(RestTestClient reader, String articleId) {
-        reader.put().uri(API + "/articles/{id}/like", articleId).exchange().expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/like", articleId)
+                .exchange()
+                .expectStatus().isOk();
     }
 
     private String publishedArticle(RestTestClient author) {
         AtomicReference<String> id = new AtomicReference<>();
-        author.post().uri(API + "/articles")
+        author.post()
+                .uri(API + "/articles")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("title", TITLE, "content", "正文", "categoryId", 1, "tagIds", List.of(1)))
                 .exchange()
-                .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.id").value(String.class, id::set);
-        author.post().uri(API + "/articles/{id}/publish", id.get()).exchange().expectStatus().isOk();
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.data.id")
+                .value(String.class, id::set);
+        author.post().uri(API + "/articles/{id}/publish", id.get())
+                .exchange()
+                .expectStatus().isOk();
         return id.get();
     }
 }

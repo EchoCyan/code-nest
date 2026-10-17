@@ -19,9 +19,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class EventQueuesTest {
 
     private static List<String> routingKeysOf(Declarables declarables, String queue) {
-        return declarables.getDeclarablesByType(Binding.class).stream()
-                .filter(binding -> binding.getDestination().equals(queue)
-                        && binding.getExchange().equals(EventQueues.EXCHANGE))
+        return declarables.getDeclarablesByType(Binding.class)
+                .stream()
+                .filter(binding -> binding.getDestination().equals(queue) && binding.getExchange()
+                        .equals(EventQueues.EXCHANGE))
                 .map(Binding::getRoutingKey)
                 .toList();
     }
@@ -30,7 +31,8 @@ class EventQueuesTest {
     void handlersOfAClassLevelListenerDecideTheBindings() {
         Declarables declarables = EventQueues.declare("test.handlers", HandlersListener.class);
 
-        assertThat(routingKeysOf(declarables, "test.handlers")).containsExactlyInAnyOrder("test.created", "test.deleted");
+        assertThat(routingKeysOf(declarables, "test.handlers")).containsExactlyInAnyOrder("test.created",
+                "test.deleted");
     }
 
     @Test
@@ -42,19 +44,16 @@ class EventQueuesTest {
 
     @Test
     void listenerWithoutMatchingHandlersIsRejected() {
-        assertThatThrownBy(() -> EventQueues.declare("test.other", HandlersListener.class))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("test.other");
-        assertThatThrownBy(() -> EventQueues.declare("test.other", MethodsListener.class))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("test.other");
+        assertThatThrownBy(() -> EventQueues.declare("test.other", HandlersListener.class)).isInstanceOf(
+                IllegalStateException.class).hasMessageContaining("test.other");
+        assertThatThrownBy(() -> EventQueues.declare("test.other", MethodsListener.class)).isInstanceOf(
+                IllegalStateException.class).hasMessageContaining("test.other");
     }
 
     @Test
     void handlerWithoutAnEventParameterIsRejected() {
-        assertThatThrownBy(() -> EventQueues.declare("test.untyped", UntypedListener.class))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("@DomainEvent");
+        assertThatThrownBy(() -> EventQueues.declare("test.untyped", UntypedListener.class)).isInstanceOf(
+                IllegalStateException.class).hasMessageContaining("@DomainEvent");
     }
 
     @DomainEvent("test.created")

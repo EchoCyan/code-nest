@@ -37,16 +37,26 @@ class CounterReconcileApiTest extends ArticleTestSupport {
         String authorId = authorIdOf(author, article);
         String readerId = idOf(reader);
         String replierId = idOf(replier);
-        reader.put().uri(API + "/articles/{id}/like", article).exchange().expectStatus().isOk();
-        replier.put().uri(API + "/articles/{id}/like", article).exchange().expectStatus().isOk();
-        reader.put().uri(API + "/articles/{id}/favorite", article).exchange().expectStatus().isOk();
-        reader.put().uri(API + "/users/{id}/follow", authorId).exchange().expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/like", article)
+                .exchange()
+                .expectStatus().isOk();
+        replier.put().uri(API + "/articles/{id}/like", article)
+                .exchange()
+                .expectStatus().isOk();
+        reader.put().uri(API + "/articles/{id}/favorite", article)
+                .exchange()
+                .expectStatus().isOk();
+        reader.put().uri(API + "/users/{id}/follow", authorId)
+                .exchange()
+                .expectStatus().isOk();
         String comment = comment(reader, article);
-        replier.post().uri(API + "/comments/{id}/replies", comment)
+        replier.post()
+                .uri(API + "/comments/{id}/replies", comment)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("content", "同意"))
                 .exchange()
-                .expectStatus().isOk();
+                .expectStatus()
+                .isOk();
         // 等异步计数全部生效后再篡改，避免在途的增量落在篡改之后
         eventually(() -> expectArticleCounts(article, 2, 1, 2));
         eventually(() -> expectUserCounts(authorId, 1, 0, 2, 2));
@@ -70,10 +80,14 @@ class CounterReconcileApiTest extends ArticleTestSupport {
         counterApi.reset(CounterMetric.USER_ARTICLE, id(replierId), 5);
         counterApi.reset(CounterMetric.USER_LIKE_RECEIVED, id(replierId), 5);
 
-        RestTestClient.bindToServer().baseUrl("http://localhost:" + managementPort).build()
-                .post().uri("/actuator/counter-reconcile")
+        RestTestClient.bindToServer()
+                .baseUrl("http://localhost:" + managementPort)
+                .build()
+                .post()
+                .uri("/actuator/counter-reconcile")
                 .exchange()
-                .expectStatus().isOk();
+                .expectStatus()
+                .isOk();
 
         expectArticleCounts(article, 2, 1, 2);
         expectArticleCounts(untouched, 0, 0, 0);
@@ -85,12 +99,16 @@ class CounterReconcileApiTest extends ArticleTestSupport {
 
     private String comment(RestTestClient user, String articleId) {
         AtomicReference<String> id = new AtomicReference<>();
-        user.post().uri(API + "/articles/{id}/comments", articleId)
+        user.post()
+                .uri(API + "/articles/{id}/comments", articleId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("content", "写得好"))
                 .exchange()
-                .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.id").value(String.class, id::set);
+                .expectStatus()
+                .isOk()
+                .expectBody()
+                .jsonPath("$.data.id")
+                .value(String.class, id::set);
         return id.get();
     }
 
@@ -108,7 +126,8 @@ class CounterReconcileApiTest extends ArticleTestSupport {
         client.get().uri(API + "/articles/{id}/comments", articleId)
                 .exchange()
                 .expectStatus().isOk()
-                .expectBody().jsonPath("$.data.list[0].replyCount").isEqualTo(replies);
+                .expectBody()
+                .jsonPath("$.data.list[0].replyCount").isEqualTo(replies);
     }
 
     private void expectUserCounts(String userId, int followers, int followings, int articles, int likesReceived) {

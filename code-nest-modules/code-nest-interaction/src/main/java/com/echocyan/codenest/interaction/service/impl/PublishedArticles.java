@@ -8,7 +8,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * 点赞、收藏的前置检查：只能对已发布的文章操作。
+ * 已发布文章校验辅助组件。
+ *
+ * <p>用于在点赞、收藏等互动前置检查中校验目标文章存在且处于已发布状态。
  */
 @Component
 @RequiredArgsConstructor
@@ -17,7 +19,11 @@ class PublishedArticles {
     private final ArticleApi articleApi;
 
     /**
-     * @throws BizException {@link ArticleErrorCode#ARTICLE_NOT_FOUND} 文章不存在、已删除或是草稿
+     * 校验目标文章必须存在且处于已发布状态。
+     *
+     * @param articleId 目标文章 ID
+     * @return 文章状态信息
+     * @throws BizException 若文章不存在、已删除或非已发布状态（{@link ArticleErrorCode#ARTICLE_NOT_FOUND}）
      */
     ArticleState require(long articleId) {
         return articleApi.findPublished(articleId)

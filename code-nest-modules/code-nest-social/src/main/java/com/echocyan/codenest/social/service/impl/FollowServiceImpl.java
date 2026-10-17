@@ -31,10 +31,16 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * 用户关注业务服务实现类。
+ * <p>
+ * 实现 {@link FollowService} 关注业务、{@link FollowerGraph} 图谱拓扑查询以及 {@link CounterSource} 计数对账数据源。
+ * 针对并发关注请求通过唯一索引兜底实现幂等入库，保证只有物理数据变更时才增减计数并触发领域事件。
+ */
 @Service
 @RequiredArgsConstructor
-public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> implements FollowService, FollowerGraph,
-        CounterSource {
+public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow>
+        implements FollowService, FollowerGraph, CounterSource {
 
     private final UserApi userApi;
     private final CounterApi counterApi;
@@ -50,7 +56,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         try {
             save(follow);
         } catch (DuplicateKeyException e) {
-            // 已关注过（包括并发的重复请求），不产生变化；MySQL 只回滚这一条语句，事务可以继续
+            // 已存在关注关系（含并发重复请求），静默忽略保持幂等
             return;
         }
         countFollow(followerId, authorId, 1);
@@ -61,10 +67,8 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
     @Transactional
     public void unfollow(long followerId, long authorId) {
         requireOtherUser(followerId, authorId);
-        boolean removed = lambdaUpdate()
-                .eq(Follow::getFollowerId, followerId)
-                .eq(Follow::getAuthorId, authorId)
-                .remove();
+        boolean removed =
+                lambdaUpdate().eq(Follow::getFollowerId, followerId).eq(Follow::getAuthorId, authorId).remove();
         if (removed) {
             countFollow(followerId, authorId, -1);
             eventPublisher.publish(new FollowDeletedEvent(followerId, authorId));
@@ -73,8 +77,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Override
     public CursorResult<FollowUserVO> listFollowers(long authorId, Long cursor, int size) {
-        return toCursorResult(lambdaQuery()
-                .eq(Follow::getAuthorId, authorId)
+        return toCursorResult(lambdaQuery().eq(Follow::getAuthorId, authorId)
                 .lt(cursor != null, Follow::getId, cursor)
                 .orderByDesc(Follow::getId)
                 .last("LIMIT " + (size + 1))
@@ -83,8 +86,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Override
     public CursorResult<FollowUserVO> listFollowings(long followerId, Long cursor, int size) {
-        return toCursorResult(lambdaQuery()
-                .eq(Follow::getFollowerId, followerId)
+        return toCursorResult(lambdaQuery().eq(Follow::getFollowerId, followerId)
                 .lt(cursor != null, Follow::getId, cursor)
                 .orderByDesc(Follow::getId)
                 .last("LIMIT " + (size + 1))
@@ -93,23 +95,23 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     @Override
     public List<Long> listAllFollowedAuthorIds(long followerId) {
-        return lambdaQuery()
-                .select(Follow::getAuthorId)
+        return lambdaQuery().select(Follow::getAuthorId)
                 .eq(Follow::getFollowerId, followerId)
-                .list().stream()
+                .list()
+                .stream()
                 .map(Follow::getAuthorId)
                 .toList();
     }
 
     @Override
     public List<Long> listFollowerIds(long authorId, Long afterFollowerId, int limit) {
-        return lambdaQuery()
-                .select(Follow::getFollowerId)
+        return lambdaQuery().select(Follow::getFollowerId)
                 .eq(Follow::getAuthorId, authorId)
                 .gt(afterFollowerId != null, Follow::getFollowerId, afterFollowerId)
                 .orderByAsc(Follow::getFollowerId)
                 .last("LIMIT " + limit)
-                .list().stream()
+                .list()
+                .stream()
                 .map(Follow::getFollowerId)
                 .toList();
     }
@@ -119,11 +121,11 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         if (authorIds.isEmpty()) {
             return Set.of();
         }
-        return lambdaQuery()
-                .select(Follow::getAuthorId)
+        return lambdaQuery().select(Follow::getAuthorId)
                 .eq(Follow::getFollowerId, followerId)
                 .in(Follow::getAuthorId, authorIds)
-                .list().stream()
+                .list()
+                .stream()
                 .map(Follow::getAuthorId)
                 .collect(Collectors.toSet());
     }
@@ -153,11 +155,15 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
     }
 
     /**
-     * 多查了一条的结果转为游标分页，并补全用户信息。
+     * 将超额拉取（Overfetched）的关注数据转换为游标分页结果，并批量补全目标用户简要信息。
      *
-     * @param listedUserId 从关注记录中取出要列出的那一方的用户 ID
+     * @param fetched      拉取到的关注记录（多查 1 条用于下页探测）
+     * @param size         期望分页大小
+     * @param listedUserId 从关注记录中提取待展示方用户 ID 的映射函数
+     * @return 包含用户视图对象及下页游标的分页结果
      */
-    private CursorResult<FollowUserVO> toCursorResult(List<Follow> fetched, int size,
+    private CursorResult<FollowUserVO> toCursorResult(List<Follow> fetched,
+                                                      int size,
                                                       Function<Follow, Long> listedUserId) {
         CursorResult<Follow> page = CursorResult.ofOverfetched(fetched, size, Follow::getId);
         if (page.list().isEmpty()) {
@@ -167,6 +173,12 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         return page.map(follow -> new FollowUserVO(users.get(listedUserId.apply(follow)), follow.getCreatedAt()));
     }
 
+    /**
+     * 校验关注操作的目标用户（禁止关注自身，且目标用户必须真实存在）。
+     *
+     * @param followerId 关注人用户 ID
+     * @param authorId   被关注作者用户 ID
+     */
     private void requireOtherUser(long followerId, long authorId) {
         if (followerId == authorId) {
             throw new BizException(SocialErrorCode.CANNOT_FOLLOW_SELF);
@@ -176,6 +188,13 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         }
     }
 
+    /**
+     * 同步上报关注变更产生的计数更新（作者粉丝数与当前用户关注数）。
+     *
+     * @param followerId 关注人用户 ID
+     * @param authorId   被关注作者用户 ID
+     * @param delta      变更增量（+1 或 -1）
+     */
     private void countFollow(long followerId, long authorId, long delta) {
         counterApi.increment(CounterMetric.USER_FOLLOWER, authorId, delta);
         counterApi.increment(CounterMetric.USER_FOLLOWING, followerId, delta);

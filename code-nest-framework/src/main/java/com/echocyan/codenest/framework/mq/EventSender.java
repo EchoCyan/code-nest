@@ -13,18 +13,29 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 按约定的消息格式把事件发往 {@link EventQueues#EXCHANGE}：messageId 放在 {@code message_id} 属性，
- * 事件类型放在 {@code type} 属性，body 是事件的 JSON，消息持久化。
+ * 领域事件底层 AMQP 发送执行器。
+ *
+ * <p>将持久化消息推入 RabbitMQ Topic 交换机（{@value EventQueues#EXCHANGE}），
+ * 并在收到 Broker ACK 且未发生路由退回时异步完成 {@link CompletableFuture}。</p>
  */
 @Component
 @RequiredArgsConstructor
 class EventSender {
 
+    /**
+     * Spring AMQP RabbitMQ 客户端交互模板。
+     */
     private final RabbitTemplate rabbitTemplate;
 
     /**
-     * 发送一条消息，返回是否送达：broker ack 且消息没有因无队列绑定而被退回时为 true。
-     * 连接失败等发送异常也体现为异常完成的 future，不直接抛出。
+     * 发送单条领域事件消息并返回投递确认 Future。
+     *
+     * @param messageId  全局唯一消息标识 ID（对应 {@code mq_outbox.id}）
+     * @param routingKey AMQP 路由键（格式为 {@code <模块>.<事件>}）
+     * @param eventType  领域事件类的全限定类名（写入 {@code type} 属性）
+     * @param payload    事件序列化后的 JSON 字符串
+     * @return 异步确认结果 Future：当且仅当 Broker 成功 ACK 且未发生路由退回时结果为 {@code true}；
+     * 若被 Broker NACK 或发生无队列退回则结果为 {@code false}；若发送期网络故障则 Future 异常完成
      */
     CompletableFuture<Boolean> send(String messageId, String routingKey, String eventType, String payload) {
         Message message = MessageBuilder.withBody(payload.getBytes(StandardCharsets.UTF_8))

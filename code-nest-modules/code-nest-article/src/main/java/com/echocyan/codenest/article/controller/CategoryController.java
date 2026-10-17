@@ -13,6 +13,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
+/**
+ * 文章分类控制器。
+ */
 @SaIgnore
 @Tag(name = "分类")
 @RestController
@@ -22,6 +25,11 @@ public class CategoryController {
     private final CategoryService categoryService;
     private final CategoryConverter categoryConverter;
 
+    /**
+     * 查询全部分类列表，按预置排序权重升序返回。
+     *
+     * @return 分类简要投影列表
+     */
     @Operation(summary = "全部分类", description = "按预置顺序返回")
     @GetMapping("/categories")
     public Result<List<CategoryBrief>> list() {
